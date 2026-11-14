@@ -4,7 +4,7 @@ import { EQUIPMENT } from '../data/equipment';
 import { TEMPLATES, nextTemplate } from '../data/programs';
 import { getAlternatives, isExerciseAvailable, resolveExercise } from './alternatives';
 import { suggestNext, warmupSets } from './progression';
-import { calcPlates, epley1RM, formatClock, nutritionTargets, weeklyVolume, weightTrend } from './calc';
+import { calcPlates, epley1RM, estimateMinutes, formatClock, gainStatus, nutritionTargets, weeklyRate, weeklyVolume, weightTrend } from './calc';
 
 const allOn = Object.fromEntries(EQUIPMENT.map((e) => [e.id, true]));
 
@@ -102,6 +102,10 @@ describe('progression', () => {
     expect(r.action).toBe('decrease');
     expect(r.weight_kg).toBe(55);
   });
+  it('a workout cut short does not trigger an increase', () => {
+    expect(suggestNext(bench, 6, 10, [{ sets: s(60, 10), effort: 'ok' }], 4)!.action).toBe('hold');
+    expect(suggestNext(bench, 6, 10, [{ sets: s(60, 10, 10, 10), effort: 'ok' }], 4)!.action).toBe('increase');
+  });
   it('a single failed session only holds', () => {
     expect(suggestNext(bench, 6, 10, [{ sets: s(60, 5, 4, 4), effort: 'hard' }])!.action).toBe('hold');
   });
@@ -167,6 +171,28 @@ describe('calc', () => {
       { id: 'c', date: '2026-11-12', weight_kg: 72 },
     ]);
     expect(t.map((x) => x.trend)).toEqual([70, 70.5, 72]);
+  });
+  it('nutrition without a target weight assumes a lean gain', () => {
+    expect(nutritionTargets(70, 182, 30, 'male', null)).toEqual(nutritionTargets(70, 182, 30, 'male', 76));
+  });
+  it('weekly rate needs at least a week of data', () => {
+    const e = (date: string, weight_kg: number) => ({ id: date, date, weight_kg });
+    expect(weeklyRate(weightTrend([e('2026-11-01', 70), e('2026-11-05', 70.2)]))).toBeNull();
+    const r = weeklyRate(weightTrend([e('2026-11-01', 70), e('2026-11-08', 70.35), e('2026-11-15', 70.7)]))!;
+    expect(r.kg_per_week).toBeCloseTo(0.35, 2);
+    expect(r.pct_per_week).toBeCloseTo(0.5, 1);
+  });
+  it('gain status follows the 0.25–0.5% per week guideline', () => {
+    expect(gainStatus(0)).toBe('slow');
+    expect(gainStatus(0.3)).toBe('good');
+    expect(gainStatus(0.9)).toBe('fast');
+  });
+  it('session estimate lands in the 60–90 minute target for the programs', () => {
+    for (const t of TEMPLATES) {
+      const m = estimateMinutes(t.slots.map((sl) => ({ sets: sl.sets, rest_seconds: EXERCISE_MAP[sl.exercise_id].rest_time_seconds, is_core: EXERCISE_MAP[sl.exercise_id].is_core })));
+      expect(m, t.id).toBeGreaterThanOrEqual(50);
+      expect(m, t.id).toBeLessThanOrEqual(90);
+    }
   });
   it('clock', () => {
     expect(formatClock(75)).toBe('01:15');

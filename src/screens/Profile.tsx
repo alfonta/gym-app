@@ -5,7 +5,7 @@ import { EQUIPMENT } from '../data/equipment';
 import { EXERCISES, EXERCISE_MAP } from '../data/exercises';
 import { ANCHOR_EXERCISE_IDS } from '../data/programs';
 import { isExerciseAvailable } from '../engine/alternatives';
-import { best1RM, weeklyVolume, weightTrend, ymd } from '../engine/calc';
+import { best1RM, gainStatus, weeklyRate, weeklyVolume, weightTrend, ymd } from '../engine/calc';
 import { usePhoto } from '../hooks';
 import { exportBackup, importBackup, savePhoto, useStore } from '../store';
 import type { BodyMeasurement } from '../types';
@@ -191,7 +191,19 @@ export function Profile() {
   );
   const todayLogged = bodyweight.find((b) => b.date === ymd(new Date()));
   const latestTrend = trend[trend.length - 1]?.trend ?? profile.current_weight;
-  const toGoal = Math.round((profile.goal_weight - latestTrend) * 10) / 10;
+  const goal = profile.goal_weight;
+  const toGoal = goal === null ? null : Math.round((goal - latestTrend) * 10) / 10;
+  const rate = useMemo(() => weeklyRate(weightTrend(bodyweight)), [bodyweight]);
+  const gaining = goal === null || goal >= latestTrend;
+  const signed = (v: number) => (v > 0 ? `+${v}` : String(v));
+  const coachNote = (() => {
+    if (!rate) return 'שקול את עצמך בבוקר, לפחות 3 פעמים בשבוע. אחרי שבוע וחצי של שקילות יופיע כאן קצב השינוי השבועי.';
+    if (!gaining) return 'בודקים את המגמה אחת לשבועיים, לא את השקילה הבודדת.';
+    const status = gainStatus(rate.pct_per_week);
+    if (status === 'slow') return 'המשקל כמעט לא עולה. הוסף כ-150 קלוריות ליום ובדוק שוב בעוד שבועיים.';
+    if (status === 'fast') return 'העלייה מהירה מדי, וחלק גדול ממנה יהיה שומן. הורד כ-150 קלוריות ליום.';
+    return 'קצב טוב לעלייה נקייה. ממשיכים כך ובודקים שוב בעוד שבועיים.';
+  })();
 
   const submitWeight = () => {
     const w = numOrNull(weightInput);
@@ -210,12 +222,13 @@ export function Profile() {
           <input inputMode="decimal" value={weightInput} placeholder={todayLogged ? `היום: ${todayLogged.weight_kg}` : 'משקל בוקר'} onChange={(e) => setWeightInput(e.target.value)} aria-label="משקל בוקר" />
           <button className="btn primary" onClick={submitWeight}>{todayLogged ? 'עדכן' : 'שמור'}</button>
         </div>
-        <WeightChart points={trend.map((t) => ({ label: shortDate(t.date), value: t.weight, trend: t.trend }))} goal={profile.goal_weight} />
+        <WeightChart points={trend.map((t) => ({ label: shortDate(t.date), value: t.weight, trend: t.trend }))} goal={goal} />
         <div className="stats">
           <div><strong>{latestTrend}</strong><span>מגמה (ממוצע 7 ימים)</span></div>
-          <div><strong>{profile.goal_weight}</strong><span>יעד</span></div>
-          <div><strong dir="ltr">{toGoal > 0 ? `+${toGoal}` : toGoal}</strong><span>נותר ליעד</span></div>
+          <div><strong dir="ltr">{rate ? signed(rate.kg_per_week) : '—'}</strong><span>ק"ג בשבוע</span></div>
+          {toGoal !== null && <div><strong dir="ltr">{signed(toGoal)}</strong><span>נותר ליעד {goal}</span></div>}
         </div>
+        <p className="muted small">{coachNote}</p>
       </section>
 
       <section className="card">

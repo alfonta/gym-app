@@ -31,6 +31,7 @@ export function suggestNext(
   repMin: number,
   repMax: number,
   history: PastSession[],
+  plannedSets = 3,
 ): Suggestion | null {
   const last = history[0];
   if (!last || last.sets.length === 0) return null;
@@ -52,8 +53,10 @@ export function suggestNext(
     };
   }
 
-  const allTop = minReps >= repMax;
-  const nearTop = minReps >= repMax - 1;
+  // A workout that was cut short is not proof the weight is mastered.
+  const enough = top.length >= Math.min(plannedSets, 3);
+  const allTop = enough && minReps >= repMax;
+  const nearTop = enough && minReps >= repMax - 1;
   if ((allTop && last.effort !== 'hard') || (nearTop && last.effort === 'easy')) {
     const next = weight + ex.increment_kg;
     return {

@@ -44,10 +44,11 @@ export interface NutritionTargets {
 }
 
 /** Mifflin-St Jeor × moderate activity, plus a small surplus when the goal is to gain. */
-export function nutritionTargets(weight: number, height: number, age: number, sex: Sex, goalWeight: number): NutritionTargets {
+export function nutritionTargets(weight: number, height: number, age: number, sex: Sex, goalWeight: number | null): NutritionTargets {
   const bmr = 10 * weight + 6.25 * height - 5 * age + (sex === 'male' ? 5 : -161);
   const tdee = bmr * 1.55;
-  const delta = goalWeight > weight ? 300 : goalWeight < weight ? -400 : 0;
+  // No target weight → assume the app's default purpose: a lean gain.
+  const delta = goalWeight === null || goalWeight > weight ? 300 : goalWeight < weight ? -400 : 0;
   return {
     calories: Math.round((tdee + delta) / 50) * 50,
     protein: Math.round((weight * 1.8) / 5) * 5,
@@ -110,6 +111,41 @@ export function weightTrend(entries: BodyweightEntry[]): TrendPoint[] {
     const avg = window.reduce((a, x) => a + x.weight_kg, 0) / window.length;
     return { date: e.date, weight: e.weight_kg, trend: Math.round(avg * 100) / 100 };
   });
+}
+
+export interface WeeklyRate {
+  kg_per_week: number;
+  pct_per_week: number;
+}
+
+/**
+ * Change of the trend line per week, measured against the trend at least a
+ * week earlier. Null until there is enough data to say anything.
+ */
+export function weeklyRate(trend: TrendPoint[]): WeeklyRate | null {
+  const last = trend[trend.length - 1];
+  if (!last) return null;
+  const t = new Date(last.date).getTime();
+  const base = [...trend].reverse().find((p) => t - new Date(p.date).getTime() >= 7 * 86400000);
+  if (!base) return null;
+  const days = (t - new Date(base.date).getTime()) / 86400000;
+  const kg = ((last.trend - base.trend) / days) * 7;
+  return { kg_per_week: Math.round(kg * 100) / 100, pct_per_week: Math.round((kg / base.trend) * 1000) / 10 };
+}
+
+export type GainStatus = 'slow' | 'good' | 'fast';
+
+/** Lean-gain guideline: roughly 0.25–0.5% of body weight per week. */
+export function gainStatus(pctPerWeek: number): GainStatus {
+  if (pctPerWeek < 0.1) return 'slow';
+  if (pctPerWeek > 0.6) return 'fast';
+  return 'good';
+}
+
+/** Rough session length in minutes: work + rest for every set, plus a warm-up. */
+export function estimateMinutes(items: { sets: number; rest_seconds: number; is_core: boolean }[]): number {
+  const seconds = items.reduce((a, i) => a + i.sets * (i.rest_seconds + (i.is_core ? 35 : 45)), 0);
+  return Math.round((seconds / 60 + 5) / 5) * 5;
 }
 
 export function formatClock(totalSeconds: number): string {

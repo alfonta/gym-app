@@ -14,7 +14,7 @@ export function ProfileForm({ submitLabel, onSaved }: { submitLabel: string; onS
 
   const [height, setHeight] = useState(profile ? String(profile.height_cm) : '');
   const [weight, setWeight] = useState(profile ? String(profile.current_weight) : '');
-  const [goal, setGoal] = useState(profile ? String(profile.goal_weight) : '');
+  const [goal, setGoal] = useState(profile?.goal_weight ? String(profile.goal_weight) : '');
   const [age, setAge] = useState(profile ? String(profile.age) : '');
   const [sex, setSex] = useState<Sex>(profile?.sex ?? 'male');
   const [program, setProgram] = useState<ProgramType>(profile?.program ?? 'ppl');
@@ -25,17 +25,18 @@ export function ProfileForm({ submitLabel, onSaved }: { submitLabel: string; onS
   const [error, setError] = useState('');
 
   const n = (v: string) => Number(v.replace(',', '.'));
-  const valid = [height, weight, goal, age].every((v) => v.trim() !== '' && n(v) > 0);
-  const auto = valid ? nutritionTargets(n(weight), n(height), n(age), sex, n(goal)) : null;
+  const valid = [height, weight, age].every((v) => v.trim() !== '' && n(v) > 0);
+  const goalValue = goal.trim() !== '' && n(goal) > 0 ? n(goal) : null;
+  const auto = valid ? nutritionTargets(n(weight), n(height), n(age), sex, goalValue) : null;
 
   const submit = () => {
     if (!valid) {
-      setError('יש למלא גובה, משקל, משקל יעד וגיל.');
+      setError('יש למלא גובה, משקל וגיל.');
       return;
     }
     const isNew = !profile;
     saveProfile({
-      height_cm: n(height), current_weight: n(weight), goal_weight: n(goal), age: n(age), sex, program,
+      height_cm: n(height), current_weight: n(weight), goal_weight: goalValue, age: n(age), sex, program,
       daily_calories_goal: n(calories) > 0 ? n(calories) : auto!.calories,
       daily_protein_goal: n(protein) > 0 ? n(protein) : auto!.protein,
       bar_weight_kg: n(bar) > 0 ? n(bar) : 20,
@@ -51,7 +52,7 @@ export function ProfileForm({ submitLabel, onSaved }: { submitLabel: string; onS
         <label className="field"><span>גובה (ס"מ)</span><input inputMode="decimal" value={height} onChange={(e) => setHeight(e.target.value)} /></label>
         <label className="field"><span>גיל</span><input inputMode="numeric" value={age} onChange={(e) => setAge(e.target.value)} /></label>
         <label className="field"><span>משקל נוכחי (ק"ג)</span><input inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value)} /></label>
-        <label className="field"><span>משקל יעד (ק"ג)</span><input inputMode="decimal" value={goal} onChange={(e) => setGoal(e.target.value)} /></label>
+        <label className="field"><span>משקל יעד (לא חובה)</span><input inputMode="decimal" value={goal} placeholder="—" onChange={(e) => setGoal(e.target.value)} /></label>
       </div>
 
       <div className="field">

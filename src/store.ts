@@ -7,7 +7,7 @@ import type {
 import { EQUIPMENT } from './data/equipment';
 import { EXERCISES, EXERCISE_MAP } from './data/exercises';
 import { TEMPLATE_MAP } from './data/programs';
-import { resolveExercise } from './engine/alternatives';
+import { isExerciseAvailable, resolveExercise } from './engine/alternatives';
 import { best1RM, epley1RM, ymd } from './engine/calc';
 import type { PastSession } from './engine/progression';
 
@@ -35,6 +35,8 @@ interface Data {
   bodyweight: BodyweightEntry[];
   measurements: BodyMeasurement[];
   active: ActiveWorkout | null;
+  /** Remembered swaps: planned exercise id → preferred replacement. */
+  swap_prefs: Record<string, string>;
 }
 
 interface Actions {
@@ -73,6 +75,7 @@ const initial: Data = {
   bodyweight: [],
   measurements: [],
   active: null,
+  swap_prefs: {},
 };
 
 const mapItem = (a: ActiveWorkout, index: number, fn: (it: ActiveItem) => ActiveItem): ActiveWorkout => ({
@@ -91,12 +94,14 @@ export const useStore = create<Store>()(
 
       startWorkout: (split) => {
         const tpl = TEMPLATE_MAP[split];
-        const { equipment } = get();
+        const { equipment, swap_prefs } = get();
         const used: string[] = [];
         const items: ActiveItem[] = [];
         for (const slot of tpl.slots) {
           // Equipment fallback: planned exercise, else best available alternative, else skip.
-          const ex = resolveExercise(EXERCISE_MAP[slot.exercise_id], EXERCISES, equipment, used);
+          const preferred = EXERCISE_MAP[swap_prefs[slot.exercise_id]];
+          const ex = (preferred && !used.includes(preferred.id) && isExerciseAvailable(preferred, equipment) ? preferred : null)
+            ?? resolveExercise(EXERCISE_MAP[slot.exercise_id], EXERCISES, equipment, used);
           if (!ex) continue;
           used.push(ex.id);
           items.push({
@@ -205,6 +210,14 @@ export const useStore = create<Store>()(
       swapExercise: (item, exerciseId) =>
         set((s) => (s.active
           ? {
+            // Remember the choice so the next workout starts with it.
+            swap_prefs: (() => {
+              const planned = s.active!.items[item].planned_exercise_id;
+              const next = { ...s.swap_prefs };
+              if (planned === exerciseId) delete next[planned];
+              else next[planned] = exerciseId;
+              return next;
+            })(),
             active: mapItem(s.active, item, (it) => ({
               ...it,
               exercise_id: exerciseId,
@@ -303,7 +316,7 @@ export async function exportBackup(): Promise<string> {
   }
   const data: Data = {
     profile: s.profile, equipment: s.equipment, workouts: s.workouts, sets: s.sets,
-    bodyweight: s.bodyweight, measurements: s.measurements, active: null,
+    bodyweight: s.bodyweight, measurements: s.measurements, active: null, swap_prefs: s.swap_prefs,
   };
   return JSON.stringify({ app: 'gym-app', version: 1, exported_at: new Date().toISOString(), data, photos });
 }

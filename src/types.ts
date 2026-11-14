@@ -100,7 +100,8 @@ export interface UserProfile {
   age: number;
   sex: Sex;
   current_weight: number;
-  goal_weight: number;
+  /** Optional – the app works without a target weight. */
+  goal_weight: number | null;
   daily_calories_goal: number;
   daily_protein_goal: number;
   program: ProgramType;

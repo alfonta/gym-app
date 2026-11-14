@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import confetti from 'canvas-confetti';
 import { EXERCISES, EXERCISE_MAP, MUSCLE_LABEL } from '../data/exercises';
 import { TEMPLATE_MAP } from '../data/programs';
-import { getAlternatives } from '../engine/alternatives';
+import { getAlternatives, isExerciseAvailable } from '../engine/alternatives';
 import { calcPlates, formatClock } from '../engine/calc';
 import { suggestNext, warmupSets } from '../engine/progression';
 import { beep, primeAudio, useNow, useWakeLock } from '../hooks';
@@ -10,10 +10,11 @@ import { historyFor, useStore, type WorkoutSummary } from '../store';
 import type { Effort, Exercise } from '../types';
 import { Sheet } from '../components/Sheet';
 
-const EFFORTS: { id: Effort; label: string }[] = [
-  { id: 'easy', label: 'קל' },
-  { id: 'ok', label: 'בינוני' },
-  { id: 'hard', label: 'קשה' },
+// Beginners judge effort poorly from a bare word, so each option says what it means.
+const EFFORTS: { id: Effort; label: string; hint: string }[] = [
+  { id: 'easy', label: 'קל', hint: 'נשארו 4+ חזרות' },
+  { id: 'ok', label: 'בדיוק', hint: 'נשארו 1–3 חזרות' },
+  { id: 'hard', label: 'קשה מדי', hint: 'עד כשל או טכניקה נשברה' },
 ];
 
 const num = (v: string): number | null => {
@@ -84,6 +85,40 @@ function plateColor(p: number): string {
   return '#9ca3af';
 }
 
+/**
+ * Manual stopwatch in the header. Tap: start → stop → reset.
+ * `onStop` receives the measured seconds (used to fill timed sets like a plank).
+ */
+function Stopwatch({ onStop }: { onStop: (seconds: number) => void }) {
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [frozen, setFrozen] = useState<number | null>(null);
+  const now = useNow(250);
+  const running = startedAt !== null;
+  const seconds = running ? Math.max(0, Math.floor((now - startedAt) / 1000)) : frozen;
+
+  const tap = () => {
+    primeAudio();
+    if (running) {
+      const s = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+      setStartedAt(null);
+      setFrozen(s);
+      onStop(s);
+    } else if (frozen !== null) {
+      setFrozen(null);
+    } else {
+      setStartedAt(Date.now());
+    }
+  };
+
+  const label = running ? 'עצור סטופר' : frozen !== null ? 'אפס סטופר' : 'הפעל סטופר';
+  return (
+    <button className={`stopwatch ${running ? 'run' : frozen !== null ? 'stopped' : ''}`} onClick={tap} aria-label={label}>
+      <span aria-hidden>{running ? '■' : frozen !== null ? '↺' : '⏱'}</span>
+      <span className="sw-time" role="timer">{seconds === null ? 'סטופר' : formatClock(seconds)}</span>
+    </button>
+  );
+}
+
 function RestBar({ nextName, progress }: { nextName: string | null; progress: number }) {
   const rest = useStore((s) => s.active?.rest ?? null);
   const adjustRest = useStore((s) => s.adjustRest);
@@ -108,6 +143,7 @@ function RestBar({ nextName, progress }: { nextName: string | null; progress: nu
         <div className={`rest ${over ? 'rest-over' : ''}`}>
           <button className="btn ghost sm" onClick={() => adjustRest(-15)} disabled={over} aria-label="פחות 15 שניות"><span dir="ltr">−15</span></button>
           <div className="rest-center">
+            <div className="rest-label">{over ? 'המנוחה הסתיימה' : 'מנוחה'}</div>
             <div className="rest-time" role="timer">{over ? 'קדימה!' : formatClock(remaining)}</div>
             <div className="rest-track"><div style={{ width: `${over ? 100 : Math.min(100, 100 - (remaining / rest.total_seconds) * 100)}%` }} /></div>
           </div>
@@ -135,27 +171,49 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
   const [plateFor, setPlateFor] = useState<number | null>(null);
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [shake, setShake] = useState<number | null>(null);
+  const [inputHint, setInputHint] = useState(false);
 
   const idx = active.current_index;
   const item = active.items[idx];
   const ex = EXERCISE_MAP[item.exercise_id];
+  const planned = EXERCISE_MAP[item.planned_exercise_id];
   const tpl = TEMPLATE_MAP[active.split_type];
   const timed = ex.tracking === 'time';
   const showWeight = ex.tracking !== 'time';
 
+  // Each exercise starts at the top of the screen.
+  const stripRef = useRef<HTMLElement>(null);
+  const effortRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    setInputHint(false);
+    stripRef.current?.querySelector('.cur')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [idx]);
+
   const history = useMemo(() => historyFor(ex.id, workouts, logs), [ex.id, workouts, logs]);
   const last = history[0];
-  const suggestion = useMemo(() => suggestNext(ex, item.rep_min, item.rep_max, history), [ex, item.rep_min, item.rep_max, history]);
+  const suggestion = useMemo(
+    () => suggestNext(ex, item.rep_min, item.rep_max, history, item.sets.length),
+    [ex, item.rep_min, item.rep_max, history, item.sets.length],
+  );
 
   const totalSets = active.items.reduce((a, i) => a + i.sets.length, 0);
   const doneSets = active.items.reduce((a, i) => a + i.sets.filter((s) => s.done).length, 0);
   const itemDone = item.sets.every((s) => s.done);
   const nextItem = active.items[idx + 1];
 
-  const alternatives = useMemo(
-    () => getAlternatives(ex, EXERCISES, equipment, active.items.map((i) => i.exercise_id)),
-    [ex, equipment, active.items],
-  );
+  // The rating appears below the fold – bring it into view once the last set is ticked.
+  useEffect(() => {
+    if (itemDone && item.role !== 'core' && !item.effort) effortRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [itemDone, item.role, item.effort]);
+
+  const alternatives = useMemo(() => {
+    const inWorkout = active.items.map((i) => i.exercise_id);
+    const alts = getAlternatives(ex, EXERCISES, equipment, [...inWorkout, planned.id]);
+    // After a swap, always offer the way back to the planned exercise first.
+    const original = ex.id !== planned.id && isExerciseAvailable(planned, equipment) && !inWorkout.includes(planned.id) ? [planned] : [];
+    return [...original, ...alts].slice(0, 3);
+  }, [ex, planned, equipment, active.items]);
 
   // Ghost values: same set from the previous workout, else the previous set today.
   const ghost = (setIdx: number): { weight: number | null; reps: number | null } => {
@@ -175,10 +233,20 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
     const reps = num(s.reps) ?? g.reps;
     if (weight === null || reps === null || reps <= 0) {
       setShake(setIdx);
+      setInputHint(true);
       setTimeout(() => setShake(null), 450);
       return;
     }
+    setInputHint(false);
     if (st().completeSet(idx, setIdx, weight, reps)) fireConfetti();
+    // Core work has no effort rating, so move on by itself after the last set.
+    const nowDone = item.sets.every((x, i) => x.done || i === setIdx);
+    if (nowDone && item.role === 'core' && nextItem) st().setCurrentIndex(idx + 1);
+  };
+
+  const rate = (effort: Effort) => {
+    st().setEffort(idx, effort);
+    if (nextItem) st().setCurrentIndex(idx + 1);
   };
 
   const applySuggestion = () => {
@@ -188,27 +256,43 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
     });
   };
 
+  // A stopped stopwatch fills the next open set of a timed exercise.
+  const onStopwatch = (seconds: number) => {
+    if (!timed || seconds <= 0) return;
+    const open = item.sets.findIndex((s) => !s.done && s.reps.trim() === '');
+    if (open >= 0) st().editSet(idx, open, { reps: String(seconds) });
+  };
+
   const finish = () => {
     setConfirmFinish(false);
     onFinished(st().finishWorkout());
   };
 
+  const discard = () => {
+    if (!confirm('למחוק את האימון הזה בלי לשמור?')) return;
+    setConfirmFinish(false);
+    st().cancelWorkout();
+    onFinished(null);
+  };
+
   const warmups = item.role === 'anchor' && ex.uses_barbell
     ? warmupSets(suggestion?.weight_kg ?? num(item.sets[0].weight) ?? 0, profile.bar_weight_kg)
     : [];
+  const firstTime = !last && !item.sets.some((s) => s.done);
 
   return (
     <div className="aw">
       <header className="aw-header">
-        <button className="btn danger" onClick={() => (doneSets === totalSets ? finish() : setConfirmFinish(true))}>סיים אימון</button>
+        <button className="icon-btn" onClick={onMinimize} aria-label="מזער">⌄</button>
         <div className="aw-title">
           <strong>{tpl.name}</strong>
-          <span className="aw-clock" role="timer">{formatClock((now - active.started_at) / 1000)}</span>
+          <span className="aw-clock" role="timer" aria-label="משך האימון">{formatClock((now - active.started_at) / 1000)}</span>
         </div>
-        <button className="btn ghost sm" onClick={onMinimize} aria-label="מזער">⌄</button>
+        <Stopwatch onStop={onStopwatch} />
+        <button className="finish-btn" onClick={() => (doneSets === totalSets ? finish() : setConfirmFinish(true))}>סיים אימון</button>
       </header>
 
-      <nav className="strip" aria-label="תרגילים">
+      <nav className="strip" aria-label="תרגילים" ref={stripRef}>
         {active.items.map((it, i) => {
           const d = it.sets.every((s) => s.done);
           return (
@@ -242,13 +326,21 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
           <p className="safety">⚠️ {ex.safety_tip}</p>
         </section>
 
+        {firstTime && ex.tracking === 'weight_reps' && (
+          <section className="suggest start">
+            <span>פעם ראשונה בתרגיל: בחר משקל קל שאיתו אתה מגיע ל-{item.rep_max} חזרות בטכניקה נקייה, כשנשארות לך עוד 2–3 חזרות בכוח. עדיף להתחיל קל מדי מאשר כבד מדי.</span>
+          </section>
+        )}
+        {timed && !itemDone && (
+          <section className="suggest hold"><span>הפעל את הסטופר למעלה. כשתעצור אותו, הזמן יוזן לסט.</span></section>
+        )}
         {suggestion && ex.tracking === 'weight_reps' && (
           <section className={`suggest ${suggestion.action}`}>
             <span>{suggestion.message}</span>
             {suggestion.action !== 'hold' && <button className="btn sm" onClick={applySuggestion}>החל</button>}
           </section>
         )}
-        {suggestion && ex.tracking !== 'weight_reps' && <section className="suggest hold"><span>{suggestion.message}</span></section>}
+        {suggestion && ex.tracking === 'bodyweight_reps' && <section className="suggest hold"><span>{suggestion.message}</span></section>}
         {warmups.length > 0 && !item.sets.some((s) => s.done) && (
           <p className="muted warmup">חימום מוצע:{' '}
             {warmups.map((w, i) => <span key={i}>{i > 0 && ', '}<span dir="ltr">{w.weight_kg}×{w.reps}</span></span>)}
@@ -295,6 +387,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
               </div>
             );
           })}
+          {inputHint && <p className="warn center" role="alert">הזן {showWeight ? 'משקל ו' : ''}{timed ? 'שניות' : 'חזרות'} לפני שמסמנים את הסט.</p>}
           <div className="set-tools">
             <button className="btn ghost sm" onClick={() => st().addSet(idx)}>+ סט</button>
             <button className="btn ghost sm" onClick={() => st().removeSet(idx)} disabled={item.sets.length <= 1 || item.sets[item.sets.length - 1].done}>− סט</button>
@@ -302,11 +395,14 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
         </section>
 
         {itemDone && item.role !== 'core' && (
-          <section className="effort">
-            <span>איך הרגיש התרגיל?</span>
-            <div className="chips">
+          <section className="effort" ref={effortRef}>
+            <span>איך היה הסט האחרון?</span>
+            <div className="effort-row">
               {EFFORTS.map((e) => (
-                <button key={e.id} className={`chip ${item.effort === e.id ? 'on' : ''}`} onClick={() => st().setEffort(idx, e.id)}>{e.label}</button>
+                <button key={e.id} className={`effort-btn ${item.effort === e.id ? 'on' : ''}`} onClick={() => rate(e.id)} aria-pressed={item.effort === e.id}>
+                  <strong>{e.label}</strong>
+                  <small>{e.hint}</small>
+                </button>
               ))}
             </div>
           </section>
@@ -330,10 +426,11 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
               <img src={`${import.meta.env.BASE_URL}${a.media_urls[0]}`} alt="" />
               <span>
                 <strong>{a.name}</strong>
-                <small>{MUSCLE_LABEL[a.muscle_group]} · {a.is_compound ? 'מורכב' : 'בידוד'}</small>
+                <small>{a.id === planned.id ? 'התרגיל המקורי בתוכנית' : `${MUSCLE_LABEL[a.muscle_group]} · ${a.is_compound ? 'מורכב' : 'בידוד'}`}</small>
               </span>
             </button>
           ))}
+          <p className="muted small">הבחירה תישמר גם לאימונים הבאים.</p>
           {item.sets.some((s) => s.done) && <p className="warn">החלפה תאפס את הסטים שכבר סומנו בתרגיל הזה.</p>}
         </Sheet>
       )}
@@ -344,8 +441,9 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
         <Sheet title="לסיים את האימון?" onClose={() => setConfirmFinish(false)}>
           <p>הושלמו {doneSets} מתוך {totalSets} סטים. רק סטים שסומנו יישמרו.</p>
           <div className="stack">
-            <button className="btn danger" onClick={finish}>{doneSets > 0 ? 'סיים ושמור' : 'סיים בלי לשמור'}</button>
+            {doneSets > 0 && <button className="btn primary" onClick={finish}>סיים ושמור</button>}
             <button className="btn ghost" onClick={() => setConfirmFinish(false)}>המשך אימון</button>
+            <button className="btn ghost danger-text" onClick={doneSets > 0 ? discard : finish}>בטל אימון בלי לשמור</button>
           </div>
         </Sheet>
       )}
