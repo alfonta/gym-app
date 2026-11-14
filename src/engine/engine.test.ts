@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EXERCISES, EXERCISE_MAP } from '../data/exercises';
 import { EQUIPMENT } from '../data/equipment';
-import { TEMPLATES, nextTemplate } from '../data/programs';
+import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf } from '../data/programs';
+import { applyVariety } from './variety';
 import { getAlternatives, isExerciseAvailable, resolveExercise } from './alternatives';
 import { suggestNext, warmupSets } from './progression';
 import { exerciseProgress, recomputePRs, workoutText, workoutVolume } from './calc';
@@ -203,13 +204,82 @@ describe('calc', () => {
   });
 });
 
-describe('rotation', () => {
-  it('cycles within the chosen program', () => {
-    expect(nextTemplate('ppl', null).id).toBe('push');
-    expect(nextTemplate('ppl', 'push').id).toBe('pull');
-    expect(nextTemplate('ppl', 'legs').id).toBe('push');
-    expect(nextTemplate('full_body', 'full_a').id).toBe('full_b');
-    expect(nextTemplate('full_body', 'legs').id).toBe('full_a');
+describe('weekly schedule and rotation', () => {
+  it('presets only reference existing workouts', () => {
+    const ids = new Set(TEMPLATES.map((t) => t.id));
+    for (const seq of Object.values(PRESETS)) for (const id of seq) expect(ids.has(id), id).toBe(true);
+  });
+  it('lower-body focus has two lower days out of three', () => {
+    expect(PRESETS.lower_focus.filter((id) => id.startsWith('lower'))).toHaveLength(2);
+    expect(PRESETS.lower_focus).toHaveLength(3);
+  });
+  it('schedule falls back to the preset and ignores unknown ids', () => {
+    expect(scheduleOf({ program: 'ppl' })).toEqual(['push', 'pull', 'legs']);
+    expect(scheduleOf({ program: 'custom', schedule: ['lower_a', 'lower_b'] })).toEqual(['lower_a', 'lower_b']);
+    expect(scheduleOf({ program: 'custom', schedule: ['nope' as never] })).toEqual(['push', 'pull', 'legs']);
+  });
+  it('resumes after the last workout done', () => {
+    expect(initialRotation(['push', 'pull', 'legs'], null)).toBe(0);
+    expect(initialRotation(['push', 'pull', 'legs'], 'push')).toBe(1);
+    expect(initialRotation(['push', 'pull', 'legs'], 'legs')).toBe(0);
+    expect(initialRotation(['push', 'pull', 'legs'], 'full_a')).toBe(0);
+  });
+  it('advances in order and wraps', () => {
+    const s = PRESETS.upper_lower;
+    let i = 0;
+    const seen: string[] = [];
+    for (let k = 0; k < 5; k++) { seen.push(s[i]); i = advanceRotation(s, i, s[i]); }
+    expect(seen).toEqual(['upper_a', 'lower_a', 'upper_b', 'lower_b', 'upper_a']);
+  });
+  it('handles the same workout twice in a week', () => {
+    const s = ['lower_a', 'upper_a', 'lower_a'] as const;
+    let i = 0;
+    i = advanceRotation([...s], i, 'lower_a'); expect(i).toBe(1);
+    i = advanceRotation([...s], i, 'upper_a'); expect(i).toBe(2);
+    i = advanceRotation([...s], i, 'lower_a'); expect(i).toBe(0);
+  });
+  it('doing a later workout early skips ahead; a bonus day does not move the pointer', () => {
+    expect(advanceRotation(['push', 'pull', 'legs'], 0, 'pull')).toBe(2);
+    expect(advanceRotation(['push', 'pull', 'legs'], 1, 'full_a')).toBe(1);
+  });
+});
+
+describe('variety between rounds', () => {
+  const cat = buildCatalog([]);
+  it('even rounds are the base plan, and round 2 equals round 0', () => {
+    for (const t of TEMPLATES) {
+      expect(applyVariety(t.slots, 0, cat, allOn)).toEqual(t.slots);
+      expect(applyVariety(t.slots, 2, cat, allOn)).toEqual(t.slots);
+    }
+  });
+  it('odd rounds change at least two exercises but never the anchor', () => {
+    for (const t of TEMPLATES) {
+      const v = applyVariety(t.slots, 1, cat, allOn);
+      expect(v).toHaveLength(t.slots.length);
+      expect(v[0]).toEqual(t.slots[0]);
+      const changed = v.filter((s, i) => s.exercise_id !== t.slots[i].exercise_id).length;
+      expect(changed, t.id).toBeGreaterThanOrEqual(3);
+      expect(new Set(v.map((s) => s.exercise_id)).size, t.id).toBe(v.length);
+    }
+  });
+  it('replacements keep the muscle, the tracking type and the prescription', () => {
+    for (const t of TEMPLATES) {
+      applyVariety(t.slots, 1, cat, allOn).forEach((s, i) => {
+        const a = EXERCISE_MAP[t.slots[i].exercise_id], b = EXERCISE_MAP[s.exercise_id];
+        expect(b.muscle_group).toBe(a.muscle_group);
+        expect(b.tracking === 'time').toBe(a.tracking === 'time');
+        if (!a.is_core) expect(b.tracking).toBe(a.tracking);
+        expect([s.sets, s.rep_min, s.rep_max, s.role]).toEqual([t.slots[i].sets, t.slots[i].rep_min, t.slots[i].rep_max, t.slots[i].role]);
+      });
+    }
+  });
+  it('only uses equipment the gym has', () => {
+    const av = { ...allOn, cable: false, dumbbells: false };
+    for (const t of TEMPLATES) {
+      applyVariety(t.slots, 1, cat, av).forEach((s, i) => {
+        if (s.exercise_id !== t.slots[i].exercise_id) expect(isExerciseAvailable(EXERCISE_MAP[s.exercise_id], av)).toBe(true);
+      });
+    }
   });
 });
 

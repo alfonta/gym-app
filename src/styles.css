@@ -53,7 +53,7 @@ input { font: inherit; font-size: 18px; color: var(--text); }
 
 /* ───── Shell ───── */
 .shell { min-height: 100dvh; }
-.page { padding: calc(var(--safe-t) + 16px) 16px calc(var(--safe-b) + 92px); max-width: 560px; margin: 0 auto; display: grid; gap: 14px; }
+.page { padding: calc(max(var(--safe-t), 12px) + 20px) 16px calc(var(--safe-b) + 92px); max-width: 560px; margin: 0 auto; display: grid; gap: 14px; }
 .page.onboarding { padding-bottom: 40px; }
 .page-head { display: grid; gap: 2px; }
 .tabbar {
@@ -105,7 +105,8 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .aw { min-height: 100dvh; display: flex; flex-direction: column; }
 .aw-header {
   position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 8px;
-  padding: calc(var(--safe-t) + 6px) 10px 6px; background: var(--bg); border-bottom: 1px solid var(--line);
+  /* Extra room on top so the bar clears the iPhone status bar / Dynamic Island. */
+  padding: calc(max(var(--safe-t), 12px) + 16px) 10px 10px; background: var(--bg); border-bottom: 1px solid var(--line);
 }
 .icon-btn { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: none; font-size: 1.1rem; flex: 0 0 auto; }
 .aw-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
@@ -288,3 +289,13 @@ textarea, .select {
 .edit-row.no-weight { grid-template-columns: 1fr 44px; }
 .chart .dot-pt { fill: var(--accent); }
 .edit-head { color: var(--muted); font-size: .78rem; text-align: center; }
+
+/* ───── v4: my gym + week plan ───── */
+.gym-row { border-bottom: 1px solid var(--line); }
+.gym-row .toggle { border: 0; gap: 10px; }
+.gym-name { flex: 1; text-align: start; background: none; border: 0; padding: 4px 0; display: grid; }
+.gym-name small { color: var(--muted); }
+.gym-detail { display: grid; gap: 6px; padding: 0 0 12px; }
+.day-row { display: grid; grid-template-columns: 52px 1fr 40px; gap: 8px; align-items: center; margin-bottom: 8px; }
+.day-n { color: var(--muted); font-size: .85rem; }
+span.chip { display: inline-flex; align-items: center; }

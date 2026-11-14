@@ -51,8 +51,10 @@ export interface GymEquipment {
   is_available: boolean;
 }
 
-export type SplitType = 'push' | 'pull' | 'legs' | 'full_a' | 'full_b' | 'full_c';
-export type ProgramType = 'ppl' | 'full_body';
+export type SplitType =
+  | 'push' | 'pull' | 'legs' | 'full_a' | 'full_b' | 'full_c'
+  | 'upper_a' | 'upper_b' | 'lower_a' | 'lower_b';
+export type ProgramType = 'ppl' | 'full_body' | 'upper_lower' | 'lower_focus' | 'custom';
 export type SlotRole = 'anchor' | 'accessory' | 'core';
 
 export interface TemplateSlot {
@@ -66,7 +68,6 @@ export interface TemplateSlot {
 
 export interface WorkoutTemplate {
   id: SplitType;
-  program: ProgramType;
   name: string;
   subtitle: string;
   slots: TemplateSlot[];
@@ -112,6 +113,10 @@ export interface UserProfile {
   daily_calories_goal: number;
   daily_protein_goal: number;
   program: ProgramType;
+  /** Weekly rotation, one entry per training day. Missing = the preset of `program`. */
+  schedule?: SplitType[];
+  /** Alternate some accessory exercises between rounds of the same workout. Default on. */
+  variety?: boolean;
   bar_weight_kg: number;
   /** Plate sizes that exist in the gym, in kg. */
   plates_kg: number[];

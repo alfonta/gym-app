@@ -1,14 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
 import { BarChart, SimpleLineChart, WeightChart } from '../components/Charts';
 import { Sheet } from '../components/Sheet';
-import { EQUIPMENT } from '../data/equipment';
-import { EXERCISES } from '../data/exercises';
 import { ANCHOR_EXERCISE_IDS } from '../data/programs';
-import { isExerciseAvailable } from '../engine/alternatives';
 import { best1RM, exerciseProgress, gainStatus, weeklyRate, weeklyVolume, weightTrend, ymd } from '../engine/calc';
 import { usePhoto } from '../hooks';
 import { backupAgeDays, exportBackup, importBackup, savePhoto, useCatalog, useStore } from '../store';
-import { CustomExercisesSheet, ProgramEditorSheet } from './Library';
+import { CustomExercisesSheet, MyGymSheet, ProgramEditorSheet, WeekPlanSheet } from './Library';
 import type { BodyMeasurement } from '../types';
 import { ProfileForm } from './ProfileForm';
 
@@ -111,23 +108,6 @@ function MeasurementSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
-function EquipmentSheet({ onClose }: { onClose: () => void }) {
-  const equipment = useStore((s) => s.equipment);
-  const setEquipment = useStore((s) => s.setEquipment);
-  const availableCount = EXERCISES.filter((e) => isExerciseAvailable(e, equipment)).length;
-  return (
-    <Sheet title="הציוד שלי" onClose={onClose}>
-      <p className="muted">תרגילים ייבחרו רק אם כל הציוד שלהם מסומן כזמין. כרגע זמינים {availableCount} מתוך {EXERCISES.length} תרגילים.</p>
-      {EQUIPMENT.map((e) => (
-        <label key={e.id} className="toggle">
-          <span>{e.name}</span>
-          <input type="checkbox" checked={equipment[e.id] !== false} onChange={(ev) => setEquipment(e.id, ev.target.checked)} />
-        </label>
-      ))}
-    </Sheet>
-  );
-}
-
 /** Creates the backup file and records that a backup was made. */
 export async function downloadBackup(): Promise<void> {
   const blob = new Blob([await exportBackup()], { type: 'application/json' });
@@ -193,7 +173,7 @@ export function Profile() {
 
   const [weightInput, setWeightInput] = useState('');
   const cat = useCatalog();
-  const [sheet, setSheet] = useState<'measure' | 'equipment' | 'edit' | 'custom' | 'program' | null>(null);
+  const [sheet, setSheet] = useState<'measure' | 'equipment' | 'edit' | 'custom' | 'program' | 'week' | null>(null);
   const [progressId, setProgressId] = useState('');
 
   const trend = useMemo(() => weightTrend(bodyweight).slice(-60), [bodyweight]);
@@ -327,16 +307,18 @@ export function Profile() {
           <div><strong>{profile.daily_protein_goal}</strong><span>גרם חלבון ביום</span></div>
         </div>
         <p className="muted small">הערכה כללית לפי גובה, משקל וגיל. זה לא ייעוץ תזונתי או רפואי אישי.</p>
+        <button className="row-btn" onClick={() => setSheet('week')}><span>מבנה השבוע (ימים, דגשים וגיוון)</span><span>←</span></button>
         <button className="row-btn" onClick={() => setSheet('program')}><span>עריכת תוכנית האימונים</span><span>←</span></button>
         <button className="row-btn" onClick={() => setSheet('custom')}><span>התרגילים שלי (הוספת תרגיל)</span><span>←</span></button>
-        <button className="row-btn" onClick={() => setSheet('equipment')}><span>ניהול מלאי הציוד בחדר הכושר</span><span>←</span></button>
+        <button className="row-btn" onClick={() => setSheet('equipment')}><span>חדר הכושר שלי (מכשירים וציוד)</span><span>←</span></button>
         <button className="row-btn" onClick={() => setSheet('edit')}><span>עריכת פרופיל, סוג תוכנית ופלטות</span><span>←</span></button>
       </section>
 
       <BackupSection />
 
       {sheet === 'measure' && <MeasurementSheet onClose={() => setSheet(null)} />}
-      {sheet === 'equipment' && <EquipmentSheet onClose={() => setSheet(null)} />}
+      {sheet === 'equipment' && <MyGymSheet onClose={() => setSheet(null)} />}
+      {sheet === 'week' && <WeekPlanSheet onClose={() => setSheet(null)} />}
       {sheet === 'custom' && <CustomExercisesSheet onClose={() => setSheet(null)} />}
       {sheet === 'program' && <ProgramEditorSheet onClose={() => setSheet(null)} />}
       {sheet === 'edit' && (

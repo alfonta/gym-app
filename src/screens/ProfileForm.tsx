@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PROGRAM_LABEL } from '../data/programs';
+import { PRESETS, PROGRAM_HINT, PROGRAM_LABEL } from '../data/programs';
 import { nutritionTargets } from '../engine/calc';
 import { useStore } from '../store';
 import type { ProgramType, Sex } from '../types';
@@ -36,6 +36,8 @@ export function ProfileForm({ submitLabel, onSaved }: { submitLabel: string; onS
     }
     const isNew = !profile;
     saveProfile({
+      schedule: program === 'custom' ? profile?.schedule : PRESETS[program],
+      variety: profile?.variety,
       height_cm: n(height), current_weight: n(weight), goal_weight: goalValue, age: n(age), sex, program,
       daily_calories_goal: n(calories) > 0 ? n(calories) : auto!.calories,
       daily_protein_goal: n(protein) > 0 ? n(protein) : auto!.protein,
@@ -64,12 +66,13 @@ export function ProfileForm({ submitLabel, onSaved }: { submitLabel: string; onS
       </div>
 
       <div className="field">
-        <span>תוכנית אימונים (3 אימונים בשבוע)</span>
+        <span>מבנה האימונים השבועי</span>
         <div className="chips">
-          {(Object.keys(PROGRAM_LABEL) as ProgramType[]).map((p) => (
+          {([...Object.keys(PRESETS), ...(profile?.program === 'custom' ? ['custom'] : [])] as ProgramType[]).map((p) => (
             <button type="button" key={p} className={`chip ${program === p ? 'on' : ''}`} onClick={() => setProgram(p)}>{PROGRAM_LABEL[p]}</button>
           ))}
         </div>
+        <p className="muted small">{PROGRAM_HINT[program]} אפשר להתאים ימים ואימונים בפרופיל, תחת "מבנה השבוע".</p>
       </div>
 
       <div className="grid2">

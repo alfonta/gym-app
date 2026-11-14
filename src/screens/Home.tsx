@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
-import { PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, nextTemplate } from '../data/programs';
+import { PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, initialRotation, scheduleOf } from '../data/programs';
 import { estimateMinutes, formatClock, weekStart, ymd } from '../engine/calc';
-import { getTemplate } from '../engine/catalog';
 import { primeAudio, useNow } from '../hooks';
-import { backupAgeDays, planWorkout, useCatalog, useStore } from '../store';
+import { backupAgeDays, planSplit, useStore } from '../store';
 import type { SplitType } from '../types';
 import { downloadBackup } from './Profile';
 
@@ -23,14 +22,17 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
   const lastBackup = useStore((s) => s.last_backup_at);
   const snoozeUntil = useStore((s) => s.backup_snooze_until);
   const snoozeBackup = useStore((s) => s.snoozeBackup);
-  const cat = useCatalog();
+  const customExercises = useStore((s) => s.custom_exercises);
+  const rotationIndex = useStore((s) => s.rotation_index);
   const [weightInput, setWeightInput] = useState('');
   const now = useNow(1000);
   const [showAll, setShowAll] = useState(false);
   const [previewId, setPreviewId] = useState<SplitType | null>(null);
 
   const last = useMemo(() => [...workouts].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null, [workouts]);
-  const next = nextTemplate(profile.program, last?.split_type ?? null);
+  const schedule = scheduleOf(profile);
+  const pointer = rotationIndex ?? initialRotation(schedule, last?.split_type ?? null);
+  const next = TEMPLATE_MAP[schedule[pointer % schedule.length]];
   const thisWeek = workouts.filter((w) => weekStart(new Date(w.date)) === weekStart(new Date())).length;
 
   const start = (id: SplitType) => {
@@ -41,7 +43,7 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
   };
 
   const plan = (id: SplitType) => {
-    const rows = planWorkout(getTemplate(id, overrides).slots, cat, equipment, swapPrefs);
+    const rows = planSplit(id, { template_overrides: overrides, custom_exercises: customExercises, equipment, swap_prefs: swapPrefs, workouts, profile });
     return {
       rows,
       minutes: estimateMinutes(rows.map(({ slot, ex }) => ({ sets: slot.sets, rest_seconds: ex.rest_time_seconds, is_core: ex.is_core }))),
@@ -78,7 +80,7 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
     <>
       <header className="page-head">
         <h1>האימון של היום</h1>
-        <span className="muted">{PROGRAM_LABEL[profile.program]} · השבוע: {thisWeek} מתוך 3 אימונים</span>
+        <span className="muted">{PROGRAM_LABEL[profile.program]} · השבוע: {thisWeek} מתוך {schedule.length} אימונים</span>
       </header>
 
       {active ? (
@@ -90,7 +92,7 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
         </section>
       ) : (
         <section className="card highlight">
-          <div className="tag">הבא בתור</div>
+          <div className="tag">הבא בתור · יום {(pointer % schedule.length) + 1} מתוך {schedule.length}</div>
           <h2>{next.name}</h2>
           <p className="muted">{next.subtitle} · כ-{plan(next.id).minutes} דקות</p>
           <PlanList id={next.id} />

@@ -1,12 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
-import { EQUIPMENT } from '../data/equipment';
 import { MUSCLE_LABEL } from '../data/exercises';
-import { TEMPLATES, TEMPLATE_MAP } from '../data/programs';
+import { PRESETS, PROGRAM_HINT, PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, scheduleOf } from '../data/programs';
 import { isExerciseAvailable } from '../engine/alternatives';
 import { DEFAULT_PATTERN, defaultSlot, getTemplate } from '../engine/catalog';
-import { useCatalog, useStore } from '../store';
-import type { Exercise, MuscleGroup, SplitType, TemplateSlot, Tracking } from '../types';
+import { useCatalog, useEquipmentList, useStore } from '../store';
+import type { Exercise, MuscleGroup, ProgramType, SplitType, TemplateSlot, Tracking } from '../types';
 
 const MUSCLES = Object.keys(MUSCLE_LABEL) as MuscleGroup[];
 
@@ -18,6 +17,7 @@ export function ExercisePicker({ title, excludeIds = [], muscle, onPick, onClose
   const equipment = useStore((s) => s.equipment);
   const [filter, setFilter] = useState<MuscleGroup | null>(muscle ?? null);
   const [q, setQ] = useState('');
+  const [creating, setCreating] = useState(false);
   const list = useMemo(
     () => cat.all
       .filter((e) => !excludeIds.includes(e.id) && isExerciseAvailable(e, equipment))
@@ -26,6 +26,13 @@ export function ExercisePicker({ title, excludeIds = [], muscle, onPick, onClose
       .sort((a, b) => Number(!!b.is_custom) - Number(!!a.is_custom)),
     [cat, equipment, excludeIds, filter, q],
   );
+  if (creating) {
+    return (
+      <Sheet title="תרגיל חדש למאגר" onClose={() => setCreating(false)}>
+        <CustomExerciseForm initialName={q.trim()} initialMuscle={filter ?? undefined} onDone={(ex) => { setCreating(false); if (ex) onPick(ex); }} />
+      </Sheet>
+    );
+  }
   return (
     <Sheet title={title} onClose={onClose}>
       <label className="field"><input value={q} placeholder="חיפוש לפי שם" onChange={(e) => setQ(e.target.value)} aria-label="חיפוש תרגיל" /></label>
@@ -34,6 +41,7 @@ export function ExercisePicker({ title, excludeIds = [], muscle, onPick, onClose
         {MUSCLES.map((m) => <button key={m} className={`chip ${filter === m ? 'on' : ''}`} onClick={() => setFilter(m)}>{MUSCLE_LABEL[m]}</button>)}
       </div>
       {list.length === 0 && <p className="muted">לא נמצאו תרגילים זמינים.</p>}
+      <button className="btn ghost block" onClick={() => setCreating(true)}>+ לא מצאת? הוסף תרגיל חדש למאגר</button>
       {list.map((e) => (
         <button key={e.id} className="alt compact" onClick={() => onPick(e)}>
           <span>
@@ -56,13 +64,16 @@ const TRACKINGS: { id: Tracking; label: string }[] = [
   { id: 'time', label: 'זמן' },
 ];
 
-function CustomExerciseForm({ onDone }: { onDone: () => void }) {
+export function CustomExerciseForm({ onDone, initialName = '', initialMuscle, initialEquipment = [] }: {
+  onDone: (saved?: Exercise) => void; initialName?: string; initialMuscle?: MuscleGroup; initialEquipment?: string[];
+}) {
   const saveCustomExercise = useStore((s) => s.saveCustomExercise);
-  const [name, setName] = useState('');
-  const [muscle, setMuscle] = useState<MuscleGroup>('chest');
+  const equipmentList = useEquipmentList();
+  const [name, setName] = useState(initialName);
+  const [muscle, setMuscle] = useState<MuscleGroup>(initialMuscle ?? 'chest');
   const [kind, setKind] = useState<'compound' | 'isolation'>('isolation');
   const [tracking, setTracking] = useState<Tracking>('weight_reps');
-  const [equip, setEquip] = useState<string[]>([]);
+  const [equip, setEquip] = useState<string[]>(initialEquipment);
   const [increment, setIncrement] = useState('2.5');
   const [how, setHow] = useState('');
   const [video, setVideo] = useState('');
@@ -75,7 +86,7 @@ function CustomExerciseForm({ onDone }: { onDone: () => void }) {
     const isCore = muscle === 'core';
     const compound = !isCore && kind === 'compound';
     const inc = Number(increment.replace(',', '.'));
-    saveCustomExercise({
+    const exercise: Exercise = {
       id: `custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
       name: name.trim(), muscle_group: muscle, pattern: DEFAULT_PATTERN[muscle], equipment_ids: equip,
       instructions_tips: how.split('\n').map((l) => l.trim()).filter(Boolean),
@@ -83,8 +94,9 @@ function CustomExerciseForm({ onDone }: { onDone: () => void }) {
       is_core: isCore, is_compound: compound, is_bodyweight: tracking !== 'weight_reps', tracking,
       increment_kg: inc > 0 ? inc : 2.5, uses_barbell: equip.includes('barbell') && compound,
       video_url: url || null, is_custom: true,
-    });
-    onDone();
+    };
+    saveCustomExercise(exercise);
+    onDone(exercise);
   };
 
   return (
@@ -103,7 +115,7 @@ function CustomExerciseForm({ onDone }: { onDone: () => void }) {
       </div>
       <div className="field"><span>ציוד נדרש (לא חובה)</span>
         <div className="chips">
-          {EQUIPMENT.map((e) => (
+          {equipmentList.map((e) => (
             <button key={e.id} className={`chip sm ${equip.includes(e.id) ? 'on' : ''}`}
               onClick={() => setEquip((cur) => (cur.includes(e.id) ? cur.filter((x) => x !== e.id) : [...cur, e.id]))}>{e.name}</button>
           ))}
@@ -150,12 +162,12 @@ export function CustomExercisesSheet({ onClose }: { onClose: () => void }) {
 
 /** Permanent program editing. Saved workouts keep what was actually performed. */
 export function ProgramEditorSheet({ onClose }: { onClose: () => void }) {
-  const program = useStore((s) => s.profile!.program);
+  const profile = useStore((s) => s.profile)!;
   const overrides = useStore((s) => s.template_overrides);
   const setTemplateSlots = useStore((s) => s.setTemplateSlots);
   const cat = useCatalog();
-  const mine = TEMPLATES.filter((t) => t.program === program);
-  const [tplId, setTplId] = useState<SplitType>(mine[0].id);
+  const inWeek = scheduleOf(profile);
+  const [tplId, setTplId] = useState<SplitType>(inWeek[0]);
   const [picker, setPicker] = useState<number | 'add' | null>(null);
   const slots = getTemplate(tplId, overrides).slots;
   const edited = !!overrides[tplId];
@@ -174,9 +186,12 @@ export function ProgramEditorSheet({ onClose }: { onClose: () => void }) {
   return (
     <>
       <Sheet title="עריכת התוכנית" onClose={onClose}>
-        <div className="chips">
-          {TEMPLATES.map((t) => <button key={t.id} className={`chip ${tplId === t.id ? 'on' : ''}`} onClick={() => setTplId(t.id)}>{t.name}</button>)}
+        <div className="chips scroll-x">
+          {[...TEMPLATES].sort((a, b) => Number(inWeek.includes(b.id)) - Number(inWeek.includes(a.id))).map((t) => (
+            <button key={t.id} className={`chip ${tplId === t.id ? 'on' : ''}`} onClick={() => setTplId(t.id)}>{t.name}{inWeek.includes(t.id) ? ' ●' : ''}</button>
+          ))}
         </div>
+        <p className="muted small">● אימון שנמצא בשבוע שלך. לאימון שערכת ידנית לא מופעל גיוון אוטומטי.</p>
         <p className="muted small">שינוי קבוע: חל מהאימון הבא. אימונים שכבר נשמרו לא משתנים. לשינוי חד-פעמי, השתמש בכפתורים שבתוך האימון עצמו.</p>
         {slots.map((s, i) => {
           const ex = cat.get(s.exercise_id);
@@ -222,5 +237,121 @@ export function ProgramEditorSheet({ onClose }: { onClose: () => void }) {
         />
       )}
     </>
+  );
+}
+
+/** "My gym": which machines exist, adding and removing your own, and exercises per machine. */
+export function MyGymSheet({ onClose }: { onClose: () => void }) {
+  const list = useEquipmentList();
+  const availability = useStore((s) => s.equipment);
+  const setEquipment = useStore((s) => s.setEquipment);
+  const addEquipment = useStore((s) => s.addEquipment);
+  const deleteEquipment = useStore((s) => s.deleteEquipment);
+  const cat = useCatalog();
+  const [name, setName] = useState('');
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [addFor, setAddFor] = useState<string | null>(null);
+  const availableCount = cat.all.filter((e) => isExerciseAvailable(e, availability)).length;
+
+  const add = () => {
+    const n = name.trim();
+    if (n.length < 2 || list.some((e) => e.name === n)) return;
+    addEquipment(n);
+    setName('');
+  };
+
+  if (addFor) {
+    return (
+      <Sheet title={`תרגיל חדש: ${list.find((e) => e.id === addFor)?.name ?? ''}`} onClose={() => setAddFor(null)}>
+        <CustomExerciseForm initialEquipment={[addFor]} onDone={() => setAddFor(null)} />
+      </Sheet>
+    );
+  }
+  return (
+    <Sheet title="חדר הכושר שלי" onClose={onClose}>
+      <p className="muted">סמן מה יש במכון. תרגיל נבחר רק אם כל הציוד שלו זמין. כרגע זמינים {availableCount} מתוך {cat.all.length} תרגילים.</p>
+      {list.map((e) => {
+        const custom = e.id.startsWith('eq_');
+        const uses = cat.all.filter((x) => x.equipment_ids.includes(e.id));
+        return (
+          <div key={e.id} className="gym-row">
+            <div className="toggle">
+              <button className="gym-name" onClick={() => setOpenId(openId === e.id ? null : e.id)} aria-expanded={openId === e.id}>
+                <span>{e.name}{custom ? ' · שלי' : ''}</span>
+                <small>{uses.length} תרגילים {openId === e.id ? '▴' : '▾'}</small>
+              </button>
+              <input type="checkbox" aria-label={e.name} checked={availability[e.id] !== false} onChange={(ev) => setEquipment(e.id, ev.target.checked)} />
+            </div>
+            {openId === e.id && (
+              <div className="gym-detail">
+                {uses.length === 0 && <p className="muted small">עדיין אין תרגילים למכשיר הזה.</p>}
+                {uses.map((x) => <div key={x.id} className="small">{x.name}{x.is_custom ? ' · תרגיל שלי' : ''}</div>)}
+                <div className="grid2">
+                  <button className="btn ghost sm" onClick={() => setAddFor(e.id)}>+ תרגיל למכשיר</button>
+                  {custom && (
+                    <button className="btn ghost sm danger-text" onClick={() => { if (confirm(`להסיר את "${e.name}" מהמכון?`)) deleteEquipment(e.id); }}>הסר מכשיר</button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div className="quick-weight">
+        <input value={name} placeholder="שם מכשיר חדש" onChange={(e) => setName(e.target.value)} aria-label="שם מכשיר חדש" />
+        <button className="btn primary" onClick={add}>הוסף</button>
+      </div>
+      <p className="muted small">מכשירים מובנים אפשר לכבות. מכשירים שהוספת אפשר גם להסיר לגמרי.</p>
+    </Sheet>
+  );
+}
+
+/** Weekly structure: a preset, or any sequence of workouts, plus the variety switch. */
+export function WeekPlanSheet({ onClose }: { onClose: () => void }) {
+  const profile = useStore((s) => s.profile)!;
+  const saveProfile = useStore((s) => s.saveProfile);
+  const schedule = scheduleOf(profile);
+  const presets = Object.keys(PRESETS) as Exclude<ProgramType, 'custom'>[];
+
+  const save = (program: ProgramType, next: SplitType[]) => {
+    const { id: _id, ...rest } = profile;
+    saveProfile({ ...rest, program, schedule: next });
+  };
+  const setDay = (i: number, id: SplitType) => save('custom', schedule.map((x, j) => (j === i ? id : x)));
+  const counts = (kind: 'lower' | 'upper' | 'full') =>
+    schedule.filter((id) => (kind === 'lower' ? id === 'legs' || id.startsWith('lower') : kind === 'full' ? id.startsWith('full') : !(id === 'legs' || id.startsWith('lower') || id.startsWith('full')))).length;
+
+  return (
+    <Sheet title="מבנה השבוע" onClose={onClose}>
+      <div className="field"><span>תבנית מוכנה</span>
+        <div className="chips">
+          {presets.map((p) => (
+            <button key={p} className={`chip ${profile.program === p ? 'on' : ''}`} onClick={() => save(p, PRESETS[p])}>{PROGRAM_LABEL[p]}</button>
+          ))}
+          {profile.program === 'custom' && <span className="chip on">{PROGRAM_LABEL.custom}</span>}
+        </div>
+        <p className="muted small">{PROGRAM_HINT[profile.program]}</p>
+      </div>
+
+      <div className="field"><span>האימונים בשבוע, לפי הסדר ({schedule.length} ימים)</span>
+        {schedule.map((id, i) => (
+          <div key={i} className="day-row">
+            <span className="day-n">יום {i + 1}</span>
+            <select className="select" value={id} aria-label={`אימון ליום ${i + 1}`} onChange={(e) => setDay(i, e.target.value as SplitType)}>
+              {TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name} · {t.subtitle}</option>)}
+            </select>
+            <button className="link danger-text" disabled={schedule.length <= 1} aria-label={`הסר יום ${i + 1}`} onClick={() => save('custom', schedule.filter((_, j) => j !== i))}>✕</button>
+          </div>
+        ))}
+        <button className="btn ghost block" disabled={schedule.length >= 6} onClick={() => save('custom', [...schedule, schedule[schedule.length - 1]])}>+ הוסף יום אימון</button>
+      </div>
+      <p className="muted small">בשבוע הזה: {counts('lower')} אימוני פלג תחתון, {counts('upper')} פלג עליון, {counts('full')} גוף מלא. האימון הבא נבחר לפי הסדר הזה.</p>
+
+      <label className="toggle">
+        <span>גיוון תרגילים בין סבבים</span>
+        <input type="checkbox" checked={profile.variety !== false} onChange={(e) => { const { id: _id, ...rest } = profile; saveProfile({ ...rest, variety: e.target.checked }); }} />
+      </label>
+      <p className="muted small">כשפעיל, תרגיל העוגן נשאר קבוע, וחלק מתרגילי המשנה והבטן מתחלפים בכל פעם שחוזרים על אותו אימון. כך כל תרגיל חוזר פעם בשני סבבים, והמעקב אחרי המשקלים ממשיך לעבוד.</p>
+    </Sheet>
   );
 }

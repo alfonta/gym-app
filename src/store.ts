@@ -6,7 +6,9 @@ import type {
   ActiveItem, ActiveSet, ActiveWorkout, BodyMeasurement, BodyweightEntry, CardioEntry, Effort, Exercise,
   SetLog, SplitType, TemplateSlot, UserProfile, Workout,
 } from './types';
-import { EQUIPMENT } from './data/equipment';
+import { EQUIPMENT, type EquipmentDef } from './data/equipment';
+import { advanceRotation, initialRotation, scheduleOf } from './data/programs';
+import { applyVariety } from './engine/variety';
 import { isExerciseAvailable, resolveExercise } from './engine/alternatives';
 import { best1RM, epley1RM, recomputePRs, ymd } from './engine/calc';
 import { buildCatalog, defaultSlot, getTemplate, type Catalog, type TemplateOverrides } from './engine/catalog';
@@ -44,6 +46,10 @@ interface Data {
   cardio: CardioEntry[];
   last_backup_at: string | null;
   backup_snooze_until: string | null;
+  /** Machines the user added to their gym, beyond the built-in list. */
+  custom_equipment: EquipmentDef[];
+  /** Position in the weekly rotation. Null = derive from the last workout. */
+  rotation_index: number | null;
 }
 
 export type EditedSet = { id: string | null; exercise_id: string; weight_kg: number; reps: number };
@@ -77,6 +83,8 @@ interface Actions {
   saveCustomExercise: (ex: Exercise) => void;
   deleteCustomExercise: (id: string) => void;
   setTemplateSlots: (id: SplitType, slots: TemplateSlot[] | null) => void;
+  addEquipment: (name: string) => string;
+  deleteEquipment: (id: string) => void;
   addCardio: (c: Omit<CardioEntry, 'id'>) => void;
   deleteCardio: (id: string) => void;
   markBackup: () => void;
@@ -102,6 +110,8 @@ const initial: Data = {
   cardio: [],
   last_backup_at: null,
   backup_snooze_until: null,
+  custom_equipment: [],
+  rotation_index: null,
 };
 
 const emptySet = (): ActiveSet => ({ weight: '', reps: '', done: false, completed_at: null, is_pr: false });
@@ -138,14 +148,16 @@ export const useStore = create<Store>()(
       return {
         ...initial,
 
-        saveProfile: (p) => set((s) => ({ profile: { ...p, id: s.profile?.id ?? USER_ID } })),
+        saveProfile: (p) =>
+          set((s) => {
+            const changed = !s.profile || scheduleOf(s.profile).join() !== scheduleOf(p).join();
+            return { profile: { ...p, id: s.profile?.id ?? USER_ID }, ...(changed ? { rotation_index: null } : {}) };
+          }),
 
         setEquipment: (id, available) => set((s) => ({ equipment: { ...s.equipment, [id]: available } })),
 
         startWorkout: (split) => {
-          const { equipment, swap_prefs, template_overrides } = get();
-          const tpl = getTemplate(split, template_overrides);
-          const items: ActiveItem[] = planWorkout(tpl.slots, cat(), equipment, swap_prefs).map(({ slot, ex }) => ({
+          const items: ActiveItem[] = planSplit(split, get()).map(({ slot, ex }) => ({
             planned_exercise_id: slot.exercise_id,
             exercise_id: ex.id,
             role: slot.role,
@@ -197,7 +209,15 @@ export const useStore = create<Store>()(
             set({ active: null });
             return null;
           }
-          set((s) => ({ active: null, workouts: [...s.workouts, workout], sets: [...s.sets, ...logs] }));
+          set((s) => {
+            const schedule = s.profile ? scheduleOf(s.profile) : [];
+            const lastBefore = [...s.workouts].sort((a, b) => b.date.localeCompare(a.date))[0]?.split_type ?? null;
+            const pointer = s.rotation_index ?? initialRotation(schedule, lastBefore);
+            return {
+              active: null, workouts: [...s.workouts, workout], sets: [...s.sets, ...logs],
+              rotation_index: schedule.length ? advanceRotation(schedule, pointer, workout.split_type) : null,
+            };
+          });
           return { workout, sets: logs.length, volume: Math.round(volume), prs };
         },
 
@@ -353,6 +373,24 @@ export const useStore = create<Store>()(
             return { template_overrides: next };
           }),
 
+        addEquipment: (name) => {
+          const id = `eq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+          set((s) => ({ custom_equipment: [...s.custom_equipment, { id, name: name.trim() }], equipment: { ...s.equipment, [id]: true } }));
+          return id;
+        },
+
+        deleteEquipment: (id) =>
+          set((s) => {
+            const equipment = { ...s.equipment };
+            delete equipment[id];
+            return {
+              custom_equipment: s.custom_equipment.filter((e) => e.id !== id),
+              equipment,
+              // Exercises that needed it stay usable instead of pointing at a machine that no longer exists.
+              custom_exercises: s.custom_exercises.map((c) => ({ ...c, equipment_ids: c.equipment_ids.filter((x) => x !== id) })),
+            };
+          }),
+
         addCardio: (c) => set((s) => ({ cardio: [...s.cardio, { ...c, id: uid() }] })),
         deleteCardio: (id) => set((s) => ({ cardio: s.cardio.filter((c) => c.id !== id) })),
 
@@ -375,6 +413,25 @@ export const useStore = create<Store>()(
 );
 
 // ───── Selectors ─────
+
+/** Today's concrete exercise list for a workout: program edits, variety, preferences, equipment. */
+export function planSplit(
+  id: SplitType,
+  s: Pick<Data, 'template_overrides' | 'custom_exercises' | 'equipment' | 'swap_prefs' | 'workouts' | 'profile'>,
+) {
+  const cat = buildCatalog(s.custom_exercises);
+  const tpl = getTemplate(id, s.template_overrides);
+  // A program the user edited by hand is followed exactly.
+  const vary = !s.template_overrides[id] && s.profile?.variety !== false;
+  const round = s.workouts.filter((w) => w.split_type === id).length;
+  const slots = vary ? applyVariety(tpl.slots, round, cat, s.equipment) : tpl.slots;
+  return planWorkout(slots, cat, s.equipment, s.swap_prefs);
+}
+
+export function useEquipmentList(): EquipmentDef[] {
+  const custom = useStore((s) => s.custom_equipment);
+  return useMemo(() => [...EQUIPMENT, ...custom], [custom]);
+}
 
 export function useCatalog(): Catalog {
   const custom = useStore((s) => s.custom_exercises);
@@ -432,8 +489,9 @@ export async function exportBackup(): Promise<string> {
     bodyweight: s.bodyweight, measurements: s.measurements, active: null, swap_prefs: s.swap_prefs,
     custom_exercises: s.custom_exercises, template_overrides: s.template_overrides, cardio: s.cardio,
     last_backup_at: s.last_backup_at, backup_snooze_until: null,
+    custom_equipment: s.custom_equipment, rotation_index: s.rotation_index,
   };
-  return JSON.stringify({ app: 'gym-app', version: 2, exported_at: new Date().toISOString(), data, photos });
+  return JSON.stringify({ app: 'gym-app', version: 3, exported_at: new Date().toISOString(), data, photos });
 }
 
 /** Accepts every backup version so far; fields missing from older files fall back to defaults. */
