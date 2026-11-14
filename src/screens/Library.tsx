@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
 import { MUSCLE_LABEL } from '../data/exercises';
-import { PRESETS, PROGRAM_HINT, PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, scheduleOf } from '../data/programs';
+import { CUSTOM_TEMPLATE, PRESETS, PROGRAM_HINT, PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, scheduleOf } from '../data/programs';
+import { buildWorkout } from '../engine/builder';
+import { estimateMinutes } from '../engine/calc';
+import { INJURY_LABEL, activeInjuries, isBlocked, type InjuryArea, type InjuryLevel } from '../engine/injury';
 import { isExerciseAvailable } from '../engine/alternatives';
 import { DEFAULT_PATTERN, defaultSlot, getTemplate } from '../engine/catalog';
-import { useCatalog, useEquipmentList, useStore } from '../store';
+import { planSlots, planSplitDetailed, useCatalog, useEquipmentList, useStore } from '../store';
 import type { Exercise, MuscleGroup, ProgramType, SplitType, TemplateSlot, Tracking } from '../types';
 
 const MUSCLES = Object.keys(MUSCLE_LABEL) as MuscleGroup[];
@@ -15,6 +18,7 @@ export function ExercisePicker({ title, excludeIds = [], muscle, onPick, onClose
 }) {
   const cat = useCatalog();
   const equipment = useStore((s) => s.equipment);
+  const injuries = useStore((s) => s.profile?.injuries);
   const [filter, setFilter] = useState<MuscleGroup | null>(muscle ?? null);
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
@@ -46,7 +50,7 @@ export function ExercisePicker({ title, excludeIds = [], muscle, onPick, onClose
         <button key={e.id} className="alt compact" onClick={() => onPick(e)}>
           <span>
             <strong>{e.name}</strong>
-            <small>{MUSCLE_LABEL[e.muscle_group]}{e.is_custom ? ' · תרגיל שלי' : ''}</small>
+            <small>{MUSCLE_LABEL[e.muscle_group]}{e.is_custom ? ' · תרגיל שלי' : ''}{isBlocked(e, injuries) ? ' · ⚠️ מעמיס על אזור הפציעה' : ''}</small>
           </span>
         </button>
       ))}
@@ -187,7 +191,7 @@ export function ProgramEditorSheet({ onClose }: { onClose: () => void }) {
     <>
       <Sheet title="עריכת התוכנית" onClose={onClose}>
         <div className="chips scroll-x">
-          {[...TEMPLATES].sort((a, b) => Number(inWeek.includes(b.id)) - Number(inWeek.includes(a.id))).map((t) => (
+          {[...TEMPLATES, ...(overrides.custom ? [CUSTOM_TEMPLATE] : [])].sort((a, b) => Number(inWeek.includes(b.id)) - Number(inWeek.includes(a.id))).map((t) => (
             <button key={t.id} className={`chip ${tplId === t.id ? 'on' : ''}`} onClick={() => setTplId(t.id)}>{t.name}{inWeek.includes(t.id) ? ' ●' : ''}</button>
           ))}
         </div>
@@ -311,6 +315,7 @@ export function WeekPlanSheet({ onClose }: { onClose: () => void }) {
   const profile = useStore((s) => s.profile)!;
   const saveProfile = useStore((s) => s.saveProfile);
   const schedule = scheduleOf(profile);
+  const hasCustom = useStore((s) => !!s.template_overrides.custom);
   const presets = Object.keys(PRESETS) as Exclude<ProgramType, 'custom'>[];
 
   const save = (program: ProgramType, next: SplitType[]) => {
@@ -338,7 +343,7 @@ export function WeekPlanSheet({ onClose }: { onClose: () => void }) {
           <div key={i} className="day-row">
             <span className="day-n">יום {i + 1}</span>
             <select className="select" value={id} aria-label={`אימון ליום ${i + 1}`} onChange={(e) => setDay(i, e.target.value as SplitType)}>
-              {TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name} · {t.subtitle}</option>)}
+              {[...TEMPLATES, ...(hasCustom ? [CUSTOM_TEMPLATE] : [])].map((t) => <option key={t.id} value={t.id}>{t.name} · {t.subtitle}</option>)}
             </select>
             <button className="link danger-text" disabled={schedule.length <= 1} aria-label={`הסר יום ${i + 1}`} onClick={() => save('custom', schedule.filter((_, j) => j !== i))}>✕</button>
           </div>
@@ -352,6 +357,139 @@ export function WeekPlanSheet({ onClose }: { onClose: () => void }) {
         <input type="checkbox" checked={profile.variety !== false} onChange={(e) => { const { id: _id, ...rest } = profile; saveProfile({ ...rest, variety: e.target.checked }); }} />
       </label>
       <p className="muted small">כשפעיל, תרגיל העוגן נשאר קבוע, וחלק מתרגילי המשנה והבטן מתחלפים בכל פעם שחוזרים על אותו אימון. כך כל תרגיל חוזר פעם בשני סבבים, והמעקב אחרי המשקלים ממשיך לעבוד.</p>
+    </Sheet>
+  );
+}
+
+const SIZES = [{ n: 4, label: 'קצר' }, { n: 6, label: 'רגיל' }, { n: 8, label: 'ארוך' }];
+
+/** Build a workout from muscles and/or specific exercises; the rest is filled in automatically. */
+export function CustomWorkoutSheet({ onClose, onStart }: { onClose: () => void; onStart: () => void }) {
+  const cat = useCatalog();
+  const state = useStore();
+  const [muscles, setMuscles] = useState<MuscleGroup[]>([]);
+  const [ids, setIds] = useState<string[]>([]);
+  const [size, setSize] = useState(6);
+  const [core, setCore] = useState(true);
+  const [save, setSave] = useState(false);
+  const [picking, setPicking] = useState(false);
+
+  const slots = useMemo(
+    () => buildWorkout({ muscles, exerciseIds: ids, size, core }, cat, state.equipment, (e) => !isBlocked(e, state.profile?.injuries)),
+    [muscles, ids, size, core, cat, state.equipment, state.profile?.injuries],
+  );
+  const empty = muscles.length === 0 && ids.length === 0;
+  const plan = useMemo(() => planSlots(slots, false, 0, state), [slots, state]);
+  const minutes = estimateMinutes(plan.rows.map(({ slot, ex }) => ({ sets: slot.sets, rest_seconds: ex.rest_time_seconds, is_core: ex.is_core })));
+  const toggle = (m: MuscleGroup) => setMuscles((cur) => (cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m]));
+
+  const start = () => {
+    if (save) state.setTemplateSlots('custom', slots);
+    state.startCustomWorkout(slots);
+    onStart();
+  };
+
+  return (
+    <>
+      <Sheet title="אימון מותאם אישית" onClose={onClose}>
+        <div className="field"><span>על אילו שרירים לעבוד?</span>
+          <div className="chips">{MUSCLES.map((m) => <button key={m} className={`chip ${muscles.includes(m) ? 'on' : ''}`} onClick={() => toggle(m)}>{MUSCLE_LABEL[m]}</button>)}</div>
+        </div>
+        <div className="field"><span>תרגילים שחייבים להיות באימון (לא חובה)</span>
+          {ids.map((id) => (
+            <div key={id} className="list-row">
+              <strong>{cat.get(id).name}</strong>
+              <button className="link danger-text" aria-label={`הסר ${cat.get(id).name}`} onClick={() => setIds((cur) => cur.filter((x) => x !== id))}>✕</button>
+            </div>
+          ))}
+          <button className="btn ghost block" onClick={() => setPicking(true)}>+ בחר תרגיל</button>
+        </div>
+        <div className="field"><span>אורך האימון</span>
+          <div className="chips">{SIZES.map((x) => <button key={x.n} className={`chip ${size === x.n ? 'on' : ''}`} onClick={() => setSize(x.n)}>{x.label} · {x.n} תרגילים</button>)}</div>
+        </div>
+        <label className="toggle"><span>להוסיף פינישר בטן</span><input type="checkbox" checked={core} onChange={(e) => setCore(e.target.checked)} /></label>
+
+        {empty ? <p className="muted">בחר שרירים או תרגילים, והאימון ייבנה כאן אוטומטית.</p> : (
+          <div className="built">
+            <div className="tag">האימון שנבנה · כ-{minutes} דקות</div>
+            <ul className="plan">
+              {plan.rows.map(({ slot, ex, injury }) => (
+                <li key={ex.id} className={slot.role}>
+                  <span>{ex.name}{injury !== 'ok' && <em> ({injury === 'replaced' ? 'הותאם לפציעה' : 'מופחת'})</em>}</span>
+                  <small>{slot.sets}×{slot.rep_min}–{slot.rep_max}{ex.tracking === 'time' ? ' שנ׳' : ''}</small>
+                </li>
+              ))}
+            </ul>
+            {plan.rows.length > 0 && plan.rows.filter((r) => !r.ex.is_core).length < size && muscles.length > 0 && (
+              <p className="muted small">נבחרו פחות תרגילים מהמבוקש, כדי לא לחזור שלוש פעמים על אותה תנועה. אפשר להוסיף שרירים או תרגילים ספציפיים.</p>
+            )}
+            {plan.rows.length === 0 && <p className="warn">לא נמצאו תרגילים זמינים לבחירה הזו עם הציוד והמגבלות הנוכחיים.</p>}
+          </div>
+        )}
+        <label className="toggle"><span>שמור כ"האימון שלי" לשימוש חוזר ולשיבוץ בשבוע</span><input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} /></label>
+        <button className="btn primary block big" disabled={plan.rows.length === 0} onClick={start}>התחל את האימון</button>
+      </Sheet>
+      {picking && (
+        <ExercisePicker title="בחר תרגיל לאימון" excludeIds={ids} onClose={() => setPicking(false)} onPick={(ex) => { setIds((cur) => [...cur, ex.id]); setPicking(false); }} />
+      )}
+    </>
+  );
+}
+
+const LEVELS: { id: InjuryLevel | null; label: string }[] = [
+  { id: null, label: 'תקין' },
+  { id: 'reduce', label: 'להפחית' },
+  { id: 'avoid', label: 'להימנע' },
+];
+
+/** Injury mode: every workout of the week is adapted, not just today's. */
+export function InjurySheet({ onClose }: { onClose: () => void }) {
+  const state = useStore();
+  const profile = state.profile!;
+  const injuries = profile.injuries ?? {};
+  const set = (area: InjuryArea, level: InjuryLevel | null) => {
+    const next = { ...injuries };
+    if (level) next[area] = level;
+    else delete next[area];
+    const { id: _id, ...rest } = profile;
+    state.saveProfile({ ...rest, injuries: next });
+  };
+  const on = activeInjuries(injuries).length > 0;
+  const week = [...new Set(scheduleOf(profile))];
+
+  return (
+    <Sheet title="מצב פציעה" onClose={onClose}>
+      <p className="warn">זו התאמת עומסים כללית ולא אבחון או טיפול. בפציעה, בכאב חד או בכאב שלא חולף, פנה לרופא או לפיזיותרפיסט לפני שממשיכים להתאמן.</p>
+      {(Object.keys(INJURY_LABEL) as InjuryArea[]).map((area) => (
+        <div key={area} className="injury-row">
+          <span>{INJURY_LABEL[area]}</span>
+          <div className="chips">
+            {LEVELS.map((l) => (
+              <button key={String(l.id)} className={`chip sm ${(injuries[area] ?? null) === l.id ? 'on' : ''}`} aria-label={`${INJURY_LABEL[area]}: ${l.label}`} onClick={() => set(area, l.id)}>{l.label}</button>
+            ))}
+          </div>
+        </div>
+      ))}
+      <p className="muted small"><strong>להפחית:</strong> ממשיכים לאמן את האזור, בפחות סטים ובמשקל קל יותר, ותרגילים שמעמיסים עליו מאוד מוחלפים בעדינים יותר. <strong>להימנע:</strong> תרגילים שמעמיסים על האזור מוחלפים בתרגיל שלא נוגע בו, או יורדים מהאימון.</p>
+      {on && (
+        <div className="field"><span>ההשפעה על האימונים בשבוע שלך</span>
+          {week.map((id) => {
+            const d = planSplitDetailed(id, state);
+            const replaced = d.rows.filter((r) => r.injury === 'replaced');
+            const reduced = d.rows.filter((r) => r.injury === 'reduced');
+            return (
+              <div key={id} className="impact">
+                <strong>{TEMPLATE_MAP[id].name}</strong>
+                {replaced.length + reduced.length + d.removed.length === 0 && <div className="muted small">ללא שינוי.</div>}
+                {replaced.map((r) => <div key={r.ex.id} className="small">⇄ {r.ex.name}</div>)}
+                {reduced.length > 0 && <div className="small">↓ מופחת: {reduced.map((r) => r.ex.name).join(', ')}</div>}
+                {d.removed.length > 0 && <div className="small danger-text">✕ ירד מהאימון: {d.removed.map((e) => e.name).join(', ')}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="muted small">כשהאזור מחלים, החזר אותו ל"תקין" והאימונים יחזרו לתוכנית המלאה. בתרגילים מסומנים לא תוצע העלאת משקל.</p>
     </Sheet>
   );
 }

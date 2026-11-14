@@ -9,6 +9,7 @@ import type {
 import { EQUIPMENT, type EquipmentDef } from './data/equipment';
 import { advanceRotation, initialRotation, scheduleOf } from './data/programs';
 import { applyVariety } from './engine/variety';
+import { applyInjuries, type InjuryStatus } from './engine/injury';
 import { isExerciseAvailable, resolveExercise } from './engine/alternatives';
 import { best1RM, epley1RM, recomputePRs, ymd } from './engine/calc';
 import { buildCatalog, defaultSlot, getTemplate, type Catalog, type TemplateOverrides } from './engine/catalog';
@@ -58,6 +59,8 @@ interface Actions {
   saveProfile: (p: Omit<UserProfile, 'id'>) => void;
   setEquipment: (id: string, available: boolean) => void;
   startWorkout: (split: SplitType) => void;
+  /** One-off workout from an explicit exercise list (the custom-workout builder). */
+  startCustomWorkout: (slots: TemplateSlot[]) => void;
   cancelWorkout: () => void;
   finishWorkout: () => WorkoutSummary | null;
   setCurrentIndex: (i: number) => void;
@@ -116,6 +119,17 @@ const initial: Data = {
 
 const emptySet = (): ActiveSet => ({ weight: '', reps: '', done: false, completed_at: null, is_pr: false });
 
+const toItems = (rows: PlanRow[]): ActiveItem[] => rows.map(({ slot, ex, planned_id }) => ({
+  planned_exercise_id: planned_id,
+  exercise_id: ex.id,
+  role: slot.role,
+  rep_min: slot.rep_min,
+  rep_max: slot.rep_max,
+  sets: Array.from({ length: slot.sets }, emptySet),
+  effort: null,
+  ...(slot.caution ? { caution: true } : {}),
+}));
+
 const mapItem = (a: ActiveWorkout, index: number, fn: (it: ActiveItem) => ActiveItem): ActiveWorkout => ({
   ...a,
   items: a.items.map((it, i) => (i === index ? fn(it) : it)),
@@ -157,16 +171,12 @@ export const useStore = create<Store>()(
         setEquipment: (id, available) => set((s) => ({ equipment: { ...s.equipment, [id]: available } })),
 
         startWorkout: (split) => {
-          const items: ActiveItem[] = planSplit(split, get()).map(({ slot, ex }) => ({
-            planned_exercise_id: slot.exercise_id,
-            exercise_id: ex.id,
-            role: slot.role,
-            rep_min: slot.rep_min,
-            rep_max: slot.rep_max,
-            sets: Array.from({ length: slot.sets }, emptySet),
-            effort: null,
-          }));
-          set({ active: { id: uid(), split_type: split, started_at: Date.now(), items, current_index: 0, rest: null } });
+          set({ active: { id: uid(), split_type: split, started_at: Date.now(), items: toItems(planSplit(split, get())), current_index: 0, rest: null } });
+        },
+
+        startCustomWorkout: (slots) => {
+          const rows = planSlots(slots, false, 0, get()).rows;
+          set({ active: { id: uid(), split_type: 'custom', started_at: Date.now(), items: toItems(rows), current_index: 0, rest: null } });
         },
 
         cancelWorkout: () => set({ active: null }),
@@ -414,19 +424,45 @@ export const useStore = create<Store>()(
 
 // ───── Selectors ─────
 
-/** Today's concrete exercise list for a workout: program edits, variety, preferences, equipment. */
-export function planSplit(
-  id: SplitType,
-  s: Pick<Data, 'template_overrides' | 'custom_exercises' | 'equipment' | 'swap_prefs' | 'workouts' | 'profile'>,
-) {
-  const cat = buildCatalog(s.custom_exercises);
-  const tpl = getTemplate(id, s.template_overrides);
-  // A program the user edited by hand is followed exactly.
-  const vary = !s.template_overrides[id] && s.profile?.variety !== false;
-  const round = s.workouts.filter((w) => w.split_type === id).length;
-  const slots = vary ? applyVariety(tpl.slots, round, cat, s.equipment) : tpl.slots;
-  return planWorkout(slots, cat, s.equipment, s.swap_prefs);
+export interface PlanRow {
+  slot: TemplateSlot;
+  ex: Exercise;
+  /** Exercise the program asked for, before preferences, equipment and injuries. */
+  planned_id: string;
+  /** The user's remembered swap was used. */
+  chosen: boolean;
+  /** Replaced because the planned equipment is missing. */
+  equipment_swap: boolean;
+  injury: InjuryStatus;
 }
+type PlanState = Pick<Data, 'template_overrides' | 'custom_exercises' | 'equipment' | 'swap_prefs' | 'workouts' | 'profile'>;
+
+/** Pipeline: variety → remembered swaps and equipment fallback → injury mode. */
+export function planSlots(base: TemplateSlot[], vary: boolean, round: number, s: PlanState): { rows: PlanRow[]; removed: Exercise[] } {
+  const cat = buildCatalog(s.custom_exercises);
+  const slots = vary ? applyVariety(base, round, cat, s.equipment) : base;
+  const resolved = planWorkout(slots, cat, s.equipment, s.swap_prefs);
+  const injured = applyInjuries(resolved.map((r) => ({ ...r.slot, exercise_id: r.ex.id })), s.profile?.injuries, cat, s.equipment);
+  const byResolved = new Map(resolved.map((r) => [r.ex.id, r]));
+  const rows = injured.rows.map((row): PlanRow => {
+    const origin = byResolved.get(row.from ?? row.slot.exercise_id)!;
+    return {
+      slot: row.slot, ex: cat.get(row.slot.exercise_id), planned_id: origin.slot.exercise_id,
+      chosen: origin.chosen, equipment_swap: !origin.chosen && origin.ex.id !== origin.slot.exercise_id, injury: row.status,
+    };
+  });
+  return { rows, removed: injured.removed.map((id) => cat.get(id)) };
+}
+
+export function planSplitDetailed(id: SplitType, s: PlanState) {
+  const tpl = getTemplate(id, s.template_overrides);
+  // A program the user edited by hand is followed exactly (apart from injuries).
+  const vary = !s.template_overrides[id] && s.profile?.variety !== false;
+  return planSlots(tpl.slots, vary, s.workouts.filter((w) => w.split_type === id).length, s);
+}
+
+/** Today's concrete exercise list for a workout. */
+export const planSplit = (id: SplitType, s: PlanState): PlanRow[] => planSplitDetailed(id, s).rows;
 
 export function useEquipmentList(): EquipmentDef[] {
   const custom = useStore((s) => s.custom_equipment);

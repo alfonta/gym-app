@@ -3,6 +3,8 @@ import { EXERCISES, EXERCISE_MAP } from '../data/exercises';
 import { EQUIPMENT } from '../data/equipment';
 import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf } from '../data/programs';
 import { applyVariety } from './variety';
+import { buildWorkout } from './builder';
+import { applyInjuries, isBlocked, stress } from './injury';
 import { getAlternatives, isExerciseAvailable, resolveExercise } from './alternatives';
 import { suggestNext, warmupSets } from './progression';
 import { exerciseProgress, recomputePRs, workoutText, workoutVolume } from './calc';
@@ -358,5 +360,124 @@ describe('catalog', () => {
     expect(videoLink(EXERCISE_MAP.squat)).toMatchObject({ isSearch: true });
     expect(videoLink(EXERCISE_MAP.squat)!.url).toContain('Barbell%20Squat');
     expect(videoLink({ ...custom, video_url: 'https://example.com/v' })).toEqual({ url: 'https://example.com/v', isSearch: false });
+  });
+});
+
+describe('custom workout builder', () => {
+  const cat = buildCatalog([]);
+  const ex = (id: string) => EXERCISE_MAP[id];
+  it('nothing requested → empty', () => {
+    expect(buildWorkout({ muscles: [], exerciseIds: [], size: 6, core: false }, cat, allOn)).toEqual([]);
+    expect(buildWorkout({ muscles: [], exerciseIds: [], size: 6, core: true }, cat, allOn)).toEqual([]);
+  });
+  it('builds a balanced session for the chosen muscles', () => {
+    const slots = buildWorkout({ muscles: ['chest', 'back'], exerciseIds: [], size: 6, core: true }, cat, allOn);
+    const main = slots.filter((s) => s.role !== 'core');
+    expect(main).toHaveLength(6);
+    expect(main.filter((s) => ex(s.exercise_id).muscle_group === 'chest')).toHaveLength(3);
+    expect(main.filter((s) => ex(s.exercise_id).muscle_group === 'back')).toHaveLength(3);
+    expect(slots.filter((s) => s.role === 'core')).toHaveLength(2);
+    expect(slots[0].role).toBe('anchor');
+    expect(ex(slots[0].exercise_id).is_compound).toBe(true);
+    expect(slots.filter((s) => s.role === 'anchor')).toHaveLength(1);
+    expect(new Set(slots.map((s) => s.exercise_id)).size).toBe(slots.length);
+  });
+  it('compounds come before isolation, core last', () => {
+    const slots = buildWorkout({ muscles: ['quads', 'hamstrings', 'calves'], exerciseIds: [], size: 6, core: true }, cat, allOn);
+    const kinds = slots.map((s) => (ex(s.exercise_id).is_core ? 2 : ex(s.exercise_id).is_compound ? 0 : 1));
+    expect(kinds).toEqual([...kinds].sort());
+  });
+  it('requested exercises are always included, even beyond the size', () => {
+    const want = ['lateral_raise', 'hammer_curl', 'face_pull', 'db_curl', 'cable_fly'];
+    const slots = buildWorkout({ muscles: ['chest'], exerciseIds: want, size: 4, core: false }, cat, allOn);
+    for (const id of want) expect(slots.map((s) => s.exercise_id)).toContain(id);
+    expect(slots.some((s) => s.role === 'core')).toBe(false);
+  });
+  it('exercises only → uses exactly them when size is small', () => {
+    const slots = buildWorkout({ muscles: [], exerciseIds: ['squat', 'plank'], size: 1, core: false }, cat, allOn);
+    expect(slots.map((s) => s.exercise_id)).toEqual(['squat', 'plank']);
+    expect(slots[0].role).toBe('anchor');
+    expect(slots[1]).toMatchObject({ role: 'core', rep_min: 30 });
+  });
+  it('respects equipment and the allowed filter', () => {
+    const av = { ...allOn, barbell: false };
+    const slots = buildWorkout({ muscles: ['chest', 'quads'], exerciseIds: [], size: 6, core: false }, cat, av, (e) => e.pattern !== 'lunge');
+    for (const s of slots) {
+      expect(isExerciseAvailable(ex(s.exercise_id), av)).toBe(true);
+      expect(ex(s.exercise_id).pattern).not.toBe('lunge');
+    }
+  });
+  it('never stacks more than two exercises of one movement pattern', () => {
+    for (const muscles of [['glutes', 'hamstrings'], ['shoulders'], ['biceps'], ['chest', 'triceps']] as const) {
+      const slots = buildWorkout({ muscles: [...muscles], exerciseIds: [], size: 8, core: false }, cat, allOn);
+      const count: Record<string, number> = {};
+      for (const sl of slots) count[ex(sl.exercise_id).pattern] = (count[ex(sl.exercise_id).pattern] ?? 0) + 1;
+      expect(Math.max(...Object.values(count)), muscles.join()).toBeLessThanOrEqual(2);
+      expect(slots.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+  it('core only → a core session', () => {
+    const slots = buildWorkout({ muscles: ['core'], exerciseIds: [], size: 4, core: false }, cat, allOn);
+    expect(slots).toHaveLength(4);
+    expect(slots.every((s) => s.role === 'core')).toBe(true);
+  });
+});
+
+describe('injury mode', () => {
+  const cat = buildCatalog([]);
+  const tpl = (id: string) => TEMPLATES.find((t) => t.id === id)!.slots;
+  it('no injuries → untouched', () => {
+    const r = applyInjuries(tpl('legs'), {}, cat, allOn);
+    expect(r.rows.map((x) => x.slot)).toEqual(tpl('legs'));
+    expect(r.removed).toEqual([]);
+  });
+  it('avoid: nothing left loads the area heavily, in any workout of any program', () => {
+    for (const area of ['shoulder', 'elbow', 'wrist', 'lower_back', 'knee', 'hip', 'ankle'] as const) {
+      for (const t of TEMPLATES) {
+        const r = applyInjuries(t.slots, { [area]: 'avoid' }, cat, allOn);
+        for (const row of r.rows) expect(stress(EXERCISE_MAP[row.slot.exercise_id], area), `${area}/${t.id}/${row.slot.exercise_id}`).toBeLessThan(2);
+        for (const row of r.rows.filter((x) => x.status === 'replaced')) expect(stress(EXERCISE_MAP[row.slot.exercise_id], area)).toBe(0);
+        expect(r.rows.length + r.removed.length).toBe(t.slots.length);
+        expect(new Set(r.rows.map((x) => x.slot.exercise_id)).size).toBe(r.rows.length);
+      }
+    }
+  });
+  it('knee to avoid: squats, lunges and leg extensions are gone from leg day, hamstrings stay', () => {
+    const r = applyInjuries(tpl('legs'), { knee: 'avoid' }, cat, allOn);
+    const ids = r.rows.map((x) => x.slot.exercise_id);
+    expect(ids).not.toContain('squat');
+    expect(ids).not.toContain('leg_extension');
+    expect(ids).toContain('rdl');
+    expect(ids).toContain('lying_leg_curl');
+    expect(r.removed).toContain('leg_extension');
+  });
+  it('reduce: stressed exercises get fewer sets, lighter rep range and a caution flag', () => {
+    const r = applyInjuries(tpl('push'), { shoulder: 'reduce' }, cat, allOn);
+    const bench = r.rows.find((x) => x.slot.exercise_id === 'bench_press')!;
+    expect(bench.status).toBe('reduced');
+    expect(bench.slot).toMatchObject({ sets: 3, rep_min: 8, rep_max: 13, caution: true });
+    expect(r.removed).toEqual([]);
+    expect(r.rows).toHaveLength(tpl('push').length);
+    // Untouched exercises carry no flag.
+    expect(r.rows.find((x) => x.slot.exercise_id === 'plank')!.slot.caution).toBeUndefined();
+  });
+  it('reduce: a heavy-stress exercise is swapped for a gentler one of the same muscle', () => {
+    const r = applyInjuries(tpl('push'), { shoulder: 'reduce' }, cat, allOn);
+    const row = r.rows.find((x) => x.from === 'db_shoulder_press');
+    if (row) {
+      expect(EXERCISE_MAP[row.slot.exercise_id].muscle_group).toBe('shoulders');
+      expect(stress(EXERCISE_MAP[row.slot.exercise_id], 'shoulder')).toBeLessThan(2);
+    } else {
+      expect(r.rows.find((x) => x.slot.exercise_id === 'db_shoulder_press')!.status).toBe('reduced');
+    }
+  });
+  it('unrelated workouts are not affected', () => {
+    const r = applyInjuries(tpl('legs'), { elbow: 'avoid', wrist: 'avoid' }, cat, allOn);
+    expect(r.rows.filter((x) => x.status !== 'ok').map((x) => x.slot.exercise_id).filter((id) => !EXERCISE_MAP[id].is_core)).toEqual([]);
+  });
+  it('isBlocked only for avoided areas', () => {
+    expect(isBlocked(EXERCISE_MAP.squat, { knee: 'avoid' })).toBe(true);
+    expect(isBlocked(EXERCISE_MAP.squat, { knee: 'reduce' })).toBe(false);
+    expect(isBlocked(EXERCISE_MAP.squat, {})).toBe(false);
   });
 });

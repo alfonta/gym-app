@@ -53,7 +53,9 @@ export interface GymEquipment {
 
 export type SplitType =
   | 'push' | 'pull' | 'legs' | 'full_a' | 'full_b' | 'full_c'
-  | 'upper_a' | 'upper_b' | 'lower_a' | 'lower_b';
+  | 'upper_a' | 'upper_b' | 'lower_a' | 'lower_b'
+  /** The user's own built workout. Its slots live in template_overrides.custom. */
+  | 'custom';
 export type ProgramType = 'ppl' | 'full_body' | 'upper_lower' | 'lower_focus' | 'custom';
 export type SlotRole = 'anchor' | 'accessory' | 'core';
 
@@ -64,6 +66,8 @@ export interface TemplateSlot {
   /** For time-tracked exercises these are seconds. */
   rep_min: number;
   rep_max: number;
+  /** Set by injury mode: train this one lighter and stop on pain. */
+  caution?: boolean;
 }
 
 export interface WorkoutTemplate {
@@ -117,6 +121,8 @@ export interface UserProfile {
   schedule?: SplitType[];
   /** Alternate some accessory exercises between rounds of the same workout. Default on. */
   variety?: boolean;
+  /** Injury mode: body area → how careful to be. */
+  injuries?: Partial<Record<'shoulder' | 'elbow' | 'wrist' | 'lower_back' | 'knee' | 'hip' | 'ankle', 'reduce' | 'avoid'>>;
   bar_weight_kg: number;
   /** Plate sizes that exist in the gym, in kg. */
   plates_kg: number[];
@@ -170,6 +176,7 @@ export interface ActiveItem {
   rep_max: number;
   sets: ActiveSet[];
   effort: Effort | null;
+  caution?: boolean;
 }
 
 export interface RestState {

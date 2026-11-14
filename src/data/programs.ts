@@ -128,7 +128,10 @@ export const TEMPLATES: WorkoutTemplate[] = [
   },
 ];
 
-export const TEMPLATE_MAP = Object.fromEntries(TEMPLATES.map((t) => [t.id, t])) as Record<SplitType, WorkoutTemplate>;
+/** Placeholder for the user's own built workout; the real slots are stored as an override. */
+export const CUSTOM_TEMPLATE: WorkoutTemplate = { id: 'custom', name: 'האימון שלי', subtitle: 'אימון שבנית בעצמך', slots: [] };
+
+export const TEMPLATE_MAP = Object.fromEntries([...TEMPLATES, CUSTOM_TEMPLATE].map((t) => [t.id, t])) as Record<SplitType, WorkoutTemplate>;
 
 export const PROGRAM_LABEL: Record<ProgramType, string> = {
   ppl: 'Push / Pull / Legs',

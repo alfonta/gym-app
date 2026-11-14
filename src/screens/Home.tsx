@@ -6,6 +6,8 @@ import { primeAudio, useNow } from '../hooks';
 import { backupAgeDays, planSplit, useStore } from '../store';
 import type { SplitType } from '../types';
 import { downloadBackup } from './Profile';
+import { CustomWorkoutSheet } from './Library';
+import { INJURY_LABEL, activeInjuries } from '../engine/injury';
 
 const BACKUP_EVERY_DAYS = 14;
 
@@ -28,6 +30,8 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
   const now = useNow(1000);
   const [showAll, setShowAll] = useState(false);
   const [previewId, setPreviewId] = useState<SplitType | null>(null);
+  const [building, setBuilding] = useState(false);
+  const injured = activeInjuries(profile.injuries);
 
   const last = useMemo(() => [...workouts].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null, [workouts]);
   const schedule = scheduleOf(profile);
@@ -52,9 +56,13 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
 
   const PlanList = ({ id }: { id: SplitType }) => (
     <ul className="plan">
-      {plan(id).rows.map(({ slot, ex, chosen }) => (
+      {plan(id).rows.map(({ slot, ex, chosen, equipment_swap, injury }) => (
         <li key={ex.id} className={slot.role}>
-          <span>{ex.name}{ex.id !== slot.exercise_id && <em> ({chosen ? 'הבחירה שלך' : 'חלופה לפי הציוד'})</em>}</span>
+          <span>
+            {ex.name}
+            {injury === 'replaced' ? <em> (הותאם לפציעה)</em> : injury === 'reduced' ? <em> (מופחת)</em>
+              : chosen ? <em> (הבחירה שלך)</em> : equipment_swap ? <em> (חלופה לפי הציוד)</em> : null}
+          </span>
           <small>{slot.sets}×{slot.rep_min}–{slot.rep_max}{ex.tracking === 'time' ? ' שנ׳' : ''}</small>
         </li>
       ))}
@@ -74,7 +82,7 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
     setWeightInput('');
   };
 
-  const others = TEMPLATES.filter((t) => t.id !== next.id);
+  const others = [...TEMPLATES, ...(overrides.custom ? [TEMPLATE_MAP.custom] : [])].filter((t) => t.id !== next.id);
 
   return (
     <>
@@ -101,6 +109,12 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
           )}
           <button className="btn primary block big" onClick={() => start(next.id)}>התחל אימון</button>
         </section>
+      )}
+
+      {injured.length > 0 && (
+        <p className="injury-banner" role="status">
+          מצב פציעה פעיל: {injured.map(([a, l]) => `${INJURY_LABEL[a]} (${l === 'avoid' ? 'להימנע' : 'להפחית'})`).join(', ')}. האימונים הותאמו. לשינוי: פרופיל, מצב פציעה.
+        </p>
       )}
 
       {backupDue && (
@@ -133,6 +147,11 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
           <button className="row-btn" onClick={() => setShowAll((v) => !v)} aria-expanded={showAll}>
             <span>בחר אימון אחר (או יום רביעי בשבוע)</span><span>{showAll ? '▴' : '▾'}</span>
           </button>
+          {showAll && (
+            <button className="row-btn sub" onClick={() => setBuilding(true)}>
+              <span><strong>+ אימון מותאם אישית</strong><small>בחר שרירים או תרגילים, והאימון ייבנה אוטומטית</small></span><span>←</span>
+            </button>
+          )}
           {showAll && others.map((t) => (
             <button key={t.id} className="row-btn sub" onClick={() => setPreviewId(t.id)}>
               <span><strong>{t.name}</strong><small>{t.subtitle}</small></span><span>←</span>
@@ -146,6 +165,8 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
           אימון אחרון: {TEMPLATE_MAP[last.split_type].name}, {new Date(last.date).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' })}
         </p>
       )}
+
+      {building && <CustomWorkoutSheet onClose={() => setBuilding(false)} onStart={() => { primeAudio(); setBuilding(false); onOpenWorkout(); }} />}
 
       {previewId && (
         <Sheet title={TEMPLATE_MAP[previewId].name} onClose={() => setPreviewId(null)}>

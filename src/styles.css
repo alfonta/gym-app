@@ -299,3 +299,10 @@ textarea, .select {
 .day-row { display: grid; grid-template-columns: 52px 1fr 40px; gap: 8px; align-items: center; margin-bottom: 8px; }
 .day-n { color: var(--muted); font-size: .85rem; }
 span.chip { display: inline-flex; align-items: center; }
+
+/* ───── v5: custom workout + injury mode ───── */
+.built { border: 1px solid #2f6b47; border-radius: 12px; padding: 12px; display: grid; gap: 6px; }
+.injury-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.injury-row .chips { flex-wrap: nowrap; gap: 6px; }
+.impact { padding: 8px 0; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+.injury-banner { background: rgba(251,191,36,.1); color: #fcd77a; border-radius: 12px; padding: 10px 12px; font-size: .9rem; }

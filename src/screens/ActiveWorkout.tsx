@@ -8,6 +8,7 @@ import { suggestNext, warmupSets } from '../engine/progression';
 import { beep, primeAudio, useNow, useWakeLock } from '../hooks';
 import { historyFor, useCatalog, useStore, type WorkoutSummary } from '../store';
 import { videoLink } from '../engine/catalog';
+import { isBlocked } from '../engine/injury';
 import { ExercisePicker } from './Library';
 import type { Effort, Exercise } from '../types';
 import { Sheet } from '../components/Sheet';
@@ -217,11 +218,12 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
 
   const alternatives = useMemo(() => {
     const inWorkout = active.items.map((i) => i.exercise_id);
-    const alts = getAlternatives(ex, cat.all, equipment, [...inWorkout, planned.id]);
+    // In injury mode, do not offer exercises that load an area the user must avoid.
+    const alts = getAlternatives(ex, cat.all, equipment, [...inWorkout, planned.id], 12).filter((a) => !isBlocked(a, profile.injuries));
     // After a swap, always offer the way back to the planned exercise first.
-    const original = ex.id !== planned.id && !planned.archived && isExerciseAvailable(planned, equipment) && !inWorkout.includes(planned.id) ? [planned] : [];
+    const original = ex.id !== planned.id && !planned.archived && !isBlocked(planned, profile.injuries) && isExerciseAvailable(planned, equipment) && !inWorkout.includes(planned.id) ? [planned] : [];
     return [...original, ...alts].slice(0, 3);
-  }, [ex, planned, equipment, active.items, cat]);
+  }, [ex, planned, equipment, active.items, cat, profile.injuries]);
 
   // Ghost values: same set from the previous workout, else the previous set today.
   const ghost = (setIdx: number): { weight: number | null; reps: number | null } => {
@@ -376,7 +378,10 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
         {timed && !itemDone && (
           <section className="suggest hold"><span>הפעל את הסטופר למעלה. כשתעצור אותו, הזמן יוזן לסט.</span></section>
         )}
-        {suggestion && ex.tracking === 'weight_reps' && (
+        {item.caution && (
+          <section className="suggest decrease"><span>מצב פציעה: עבוד במשקל קל מהרגיל ובטווח תנועה נוח. אם מופיע כאב, עוצרים את התרגיל.</span></section>
+        )}
+        {suggestion && ex.tracking === 'weight_reps' && !(item.caution && suggestion.action === 'increase') && (
           <section className={`suggest ${suggestion.action}`}>
             <span>{suggestion.message}</span>
             {suggestion.action !== 'hold' && <button className="btn sm" onClick={applySuggestion}>החל</button>}
