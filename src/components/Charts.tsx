@@ -60,3 +60,28 @@ export function BarChart({ bars }: { bars: { label: string; value: number }[] })
     </svg>
   );
 }
+
+/** Plain line with dots, for per-exercise progress. */
+export function SimpleLineChart({ points }: { points: { label: string; value: number }[] }) {
+  const W = 340, H = 150, L = 34, R = 12, T = 12, B = 22;
+  if (points.length === 0) return <div className="chart-empty">אין נתונים.</div>;
+  let min = Math.min(...points.map((p) => p.value)), max = Math.max(...points.map((p) => p.value));
+  const pad = Math.max(1, (max - min) * 0.15);
+  min -= pad; max += pad;
+  const x = (i: number) => L + (points.length === 1 ? (W - L - R) / 2 : (i / (points.length - 1)) * (W - L - R));
+  const y = (v: number) => T + (1 - (v - min) / (max - min)) * (H - T - B);
+  return (
+    <svg className="chart" viewBox={`0 0 ${W} ${H}`} style={{ direction: 'ltr' }} role="img" aria-label="גרף התקדמות בתרגיל">
+      {[min + pad, max - pad].map((t, i) => (
+        <g key={i}>
+          <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="grid" />
+          <text x={L - 6} y={y(t) + 4} textAnchor="end" className="axis">{Math.round(t * 10) / 10}</text>
+        </g>
+      ))}
+      <polyline points={points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ')} className="trend" />
+      {points.map((p, i) => <circle key={i} cx={x(i)} cy={y(p.value)} r={3.5} className="dot-pt" />)}
+      <text x={L} y={H - 5} className="axis">{points[0].label}</text>
+      {points.length > 1 && <text x={W - R} y={H - 5} textAnchor="end" className="axis">{points[points.length - 1].label}</text>}
+    </svg>
+  );
+}

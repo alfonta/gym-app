@@ -1,4 +1,4 @@
-import type { BodyweightEntry, Sex, SetLog, Workout } from '../types';
+import type { BodyweightEntry, Exercise, Sex, SetLog, Workout } from '../types';
 
 // ───── Plate calculator ─────
 
@@ -155,4 +155,78 @@ export function formatClock(totalSeconds: number): string {
   const sec = s % 60;
   const p = (n: number) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${p(m)}:${p(sec)}` : `${p(m)}:${p(sec)}`;
+}
+
+// ───── Derived data after editing history ─────
+
+/**
+ * Recomputes the PR flag of every set from scratch, in chronological order.
+ * A PR is a new best estimated 1RM for that exercise, once there is an earlier
+ * workout to beat. Called after any edit or deletion so flags never go stale.
+ */
+export function recomputePRs(workouts: Workout[], sets: SetLog[], isWeighted: (exerciseId: string) => boolean): SetLog[] {
+  const order = new Map([...workouts].sort((a, b) => a.date.localeCompare(b.date)).map((w, i) => [w.id, i]));
+  const sorted = [...sets].sort((a, b) => (order.get(a.workout_id) ?? 0) - (order.get(b.workout_id) ?? 0) || a.order_index - b.order_index);
+  const priorBest = new Map<string, number>(); // best from earlier workouts
+  const current = new Map<string, { workout: string; best: number }>();
+  const flags = new Map<string, boolean>();
+  for (const s of sorted) {
+    const cur = current.get(s.exercise_id);
+    if (cur && cur.workout !== s.workout_id) {
+      priorBest.set(s.exercise_id, Math.max(priorBest.get(s.exercise_id) ?? 0, cur.best));
+      current.delete(s.exercise_id);
+    }
+    const prior = priorBest.get(s.exercise_id) ?? 0;
+    const today = current.get(s.exercise_id)?.best ?? 0;
+    const e = isWeighted(s.exercise_id) ? epley1RM(s.weight_kg, s.reps) : 0;
+    flags.set(s.id, prior > 0 && e > Math.max(prior, today) + 1e-6);
+    current.set(s.exercise_id, { workout: s.workout_id, best: Math.max(today, e) });
+  }
+  return sets.map((s) => ({ ...s, is_pr: flags.get(s.id) ?? false }));
+}
+
+export function workoutVolume(sets: SetLog[], isTimed: (exerciseId: string) => boolean): number {
+  return Math.round(sets.reduce((a, s) => a + (isTimed(s.exercise_id) ? 0 : s.weight_kg * s.reps), 0));
+}
+
+export interface ProgressPoint {
+  date: string;
+  /** Heaviest set of the session. */
+  top_weight: number;
+  top_reps: number;
+  /** Estimated 1RM (weighted) or best reps / seconds (bodyweight, timed). */
+  value: number;
+}
+
+/** One point per workout for a single exercise, oldest first. */
+export function exerciseProgress(ex: Exercise, workouts: Workout[], sets: SetLog[]): ProgressPoint[] {
+  const byWorkout = new Map<string, SetLog[]>();
+  for (const s of sets) if (s.exercise_id === ex.id) byWorkout.set(s.workout_id, [...(byWorkout.get(s.workout_id) ?? []), s]);
+  return workouts
+    .filter((w) => byWorkout.has(w.id))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((w) => {
+      const ss = byWorkout.get(w.id)!;
+      const top = ss.reduce((m, s) => (s.weight_kg > m.weight_kg || (s.weight_kg === m.weight_kg && s.reps > m.reps) ? s : m));
+      const value = ex.tracking === 'weight_reps' ? Math.round(best1RM(ss) * 10) / 10 : Math.max(...ss.map((s) => s.reps));
+      return { date: w.date, top_weight: top.weight_kg, top_reps: top.reps, value };
+    });
+}
+
+/** Plain-text summary for sharing. */
+export function workoutText(title: string, workout: Workout, sets: SetLog[], getExercise: (id: string) => Exercise): string {
+  const d = new Date(workout.date);
+  const lines = [`${title} · ${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()} · ${workout.total_duration_minutes} דקות`];
+  const groups: { id: string; sets: SetLog[] }[] = [];
+  for (const s of [...sets].sort((a, b) => a.order_index - b.order_index)) {
+    const g = groups.find((x) => x.id === s.exercise_id);
+    if (g) g.sets.push(s); else groups.push({ id: s.exercise_id, sets: [s] });
+  }
+  for (const g of groups) {
+    const ex = getExercise(g.id);
+    const body = g.sets.map((s) => (ex.tracking === 'time' ? `${s.reps} שנ׳` : s.weight_kg > 0 ? `${s.weight_kg}×${s.reps}` : `${s.reps}`) + (s.is_pr ? ' (שיא)' : '')).join(', ');
+    lines.push(`${ex.name}: ${body}`);
+  }
+  lines.push(`נפח כולל: ${workoutVolume(sets, (id) => getExercise(id).tracking === 'time').toLocaleString('en-US')} ק"ג`);
+  return lines.join('\n');
 }

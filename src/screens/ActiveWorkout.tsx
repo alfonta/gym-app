@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import confetti from 'canvas-confetti';
-import { EXERCISES, EXERCISE_MAP, MUSCLE_LABEL } from '../data/exercises';
+import { MUSCLE_LABEL } from '../data/exercises';
 import { TEMPLATE_MAP } from '../data/programs';
 import { getAlternatives, isExerciseAvailable } from '../engine/alternatives';
 import { calcPlates, formatClock } from '../engine/calc';
 import { suggestNext, warmupSets } from '../engine/progression';
 import { beep, primeAudio, useNow, useWakeLock } from '../hooks';
-import { historyFor, useStore, type WorkoutSummary } from '../store';
+import { historyFor, useCatalog, useStore, type WorkoutSummary } from '../store';
+import { videoLink } from '../engine/catalog';
+import { ExercisePicker } from './Library';
 import type { Effort, Exercise } from '../types';
 import { Sheet } from '../components/Sheet';
 
@@ -35,7 +37,7 @@ function ExerciseMedia({ ex }: { ex: Exercise }) {
     const id = setInterval(() => setFrame((f) => 1 - f), 1100);
     return () => clearInterval(id);
   }, [ex.id]);
-  if (failed) return <div className="media media-empty">אין הדגמה זמינה</div>;
+  if (failed || ex.media_urls.length === 0) return <div className="media media-empty small-media">אין הדגמה זמינה לתרגיל הזה</div>;
   return (
     <div className="media">
       {ex.media_urls.map((url, i) => (
@@ -164,6 +166,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
   const equipment = useStore((s) => s.equipment);
   const profile = useStore((s) => s.profile)!;
   const st = useStore.getState;
+  const cat = useCatalog();
   const now = useNow(1000);
   useWakeLock(true);
 
@@ -172,11 +175,15 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [shake, setShake] = useState<number | null>(null);
   const [inputHint, setInputHint] = useState(false);
+  // Sets whose values were copied in and still await an explicit confirmation.
+  const [pending, setPending] = useState<number[]>([]);
+  const [remember, setRemember] = useState(true);
+  const [picker, setPicker] = useState<'swap' | 'add' | null>(null);
 
   const idx = active.current_index;
   const item = active.items[idx];
-  const ex = EXERCISE_MAP[item.exercise_id];
-  const planned = EXERCISE_MAP[item.planned_exercise_id];
+  const ex = cat.get(item.exercise_id);
+  const planned = cat.get(item.planned_exercise_id);
   const tpl = TEMPLATE_MAP[active.split_type];
   const timed = ex.tracking === 'time';
   const showWeight = ex.tracking !== 'time';
@@ -187,6 +194,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
   useEffect(() => {
     window.scrollTo({ top: 0 });
     setInputHint(false);
+    setPending([]);
     stripRef.current?.querySelector('.cur')?.scrollIntoView({ inline: 'center', block: 'nearest' });
   }, [idx]);
 
@@ -209,11 +217,11 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
 
   const alternatives = useMemo(() => {
     const inWorkout = active.items.map((i) => i.exercise_id);
-    const alts = getAlternatives(ex, EXERCISES, equipment, [...inWorkout, planned.id]);
+    const alts = getAlternatives(ex, cat.all, equipment, [...inWorkout, planned.id]);
     // After a swap, always offer the way back to the planned exercise first.
-    const original = ex.id !== planned.id && isExerciseAvailable(planned, equipment) && !inWorkout.includes(planned.id) ? [planned] : [];
+    const original = ex.id !== planned.id && !planned.archived && isExerciseAvailable(planned, equipment) && !inWorkout.includes(planned.id) ? [planned] : [];
     return [...original, ...alts].slice(0, 3);
-  }, [ex, planned, equipment, active.items]);
+  }, [ex, planned, equipment, active.items, cat]);
 
   // Ghost values: same set from the previous workout, else the previous set today.
   const ghost = (setIdx: number): { weight: number | null; reps: number | null } => {
@@ -229,19 +237,46 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
     primeAudio();
     const s = item.sets[setIdx];
     const g = ghost(setIdx);
-    const weight = showWeight ? (num(s.weight) ?? g.weight) : 0;
-    const reps = num(s.reps) ?? g.reps;
-    if (weight === null || reps === null || reps <= 0) {
+    const typedWeight = num(s.weight);
+    const typedReps = num(s.reps);
+    // Added weight on a bodyweight exercise is 0 unless stated – that is not a copied result.
+    const weightMissing = showWeight && typedWeight === null && !ex.is_bodyweight;
+    const repsMissing = typedReps === null;
+    if (weightMissing || repsMissing) {
+      const canFill = (!weightMissing || g.weight !== null) && (!repsMissing || g.reps !== null);
+      if (canFill) {
+        // Never log a performance nobody entered: copy the suggestion in, visibly, and ask for a second tap.
+        st().editSet(idx, setIdx, {
+          ...(weightMissing ? { weight: String(g.weight) } : {}),
+          ...(repsMissing ? { reps: String(g.reps) } : {}),
+        });
+        setPending((p) => [...p.filter((x) => x !== setIdx), setIdx]);
+        setInputHint(false);
+      } else {
+        setShake(setIdx);
+        setInputHint(true);
+        setTimeout(() => setShake(null), 450);
+      }
+      return;
+    }
+    const weight = showWeight ? (typedWeight ?? 0) : 0;
+    if (typedReps <= 0) {
       setShake(setIdx);
       setInputHint(true);
       setTimeout(() => setShake(null), 450);
       return;
     }
     setInputHint(false);
-    if (st().completeSet(idx, setIdx, weight, reps)) fireConfetti();
+    setPending((p) => p.filter((x) => x !== setIdx));
+    if (st().completeSet(idx, setIdx, weight, typedReps)) fireConfetti();
     // Core work has no effort rating, so move on by itself after the last set.
     const nowDone = item.sets.every((x, i) => x.done || i === setIdx);
     if (nowDone && item.role === 'core' && nextItem) st().setCurrentIndex(idx + 1);
+  };
+
+  const edit = (setIdx: number, patch: { weight?: string; reps?: string }) => {
+    setPending((p) => p.filter((x) => x !== setIdx));
+    st().editSet(idx, setIdx, patch);
   };
 
   const rate = (effort: Effort) => {
@@ -279,6 +314,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
     ? warmupSets(suggestion?.weight_kg ?? num(item.sets[0].weight) ?? 0, profile.bar_weight_kg)
     : [];
   const firstTime = !last && !item.sets.some((s) => s.done);
+  const video = videoLink(ex);
 
   return (
     <div className="aw">
@@ -319,11 +355,17 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
           {/* Open by default the first time; collapsed once the exercise is familiar. */}
           <details className="howto-wrap" key={ex.id} open={!last}>
             <summary>איך מבצעים</summary>
+            {ex.instructions_tips.length === 0 && <p className="muted small">לא נכתבו הוראות לתרגיל הזה.</p>}
             <ol className="howto">
               {ex.instructions_tips.map((t) => <li key={t}>{t}</li>)}
             </ol>
           </details>
-          <p className="safety">⚠️ {ex.safety_tip}</p>
+          {video && (
+            <a className="video-link" href={video.url} target="_blank" rel="noopener noreferrer">
+              ▶ {video.isSearch ? 'חפש סרטון טכניקה ביוטיוב' : 'סרטון טכניקה'}
+            </a>
+          )}
+          {ex.safety_tip && <p className="safety">⚠️ {ex.safety_tip}</p>}
         </section>
 
         {firstTime && ex.tracking === 'weight_reps' && (
@@ -357,14 +399,14 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
           {item.sets.map((s, i) => {
             const g = ghost(i);
             return (
-              <div key={i} className={`set-row ${s.done ? 'done' : ''} ${shake === i ? 'shake' : ''} ${showWeight ? '' : 'no-weight'}`}>
+              <div key={i} className={`set-row ${s.done ? 'done' : ''} ${pending.includes(i) && !s.done ? 'pending' : ''} ${shake === i ? 'shake' : ''} ${showWeight ? '' : 'no-weight'}`}>
                 <span className="set-n">{s.is_pr ? '🏆' : i + 1}</span>
                 {showWeight && (
                   <div className="weight-cell">
                     <input
                       inputMode="decimal" value={s.weight} disabled={s.done}
                       placeholder={g.weight !== null ? String(g.weight) : '—'}
-                      onChange={(e) => st().editSet(idx, i, { weight: e.target.value })}
+                      onChange={(e) => edit(i, { weight: e.target.value })}
                       aria-label={`משקל סט ${i + 1}`}
                     />
                     {ex.uses_barbell && (
@@ -375,18 +417,21 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
                 <input
                   inputMode="numeric" value={s.reps} disabled={s.done}
                   placeholder={g.reps !== null ? String(g.reps) : '—'}
-                  onChange={(e) => st().editSet(idx, i, { reps: e.target.value })}
+                  onChange={(e) => edit(i, { reps: e.target.value })}
                   aria-label={`${timed ? 'שניות' : 'חזרות'} סט ${i + 1}`}
                 />
                 <button
                   className={`check ${s.done ? 'on' : ''}`}
                   onClick={() => (s.done ? st().uncompleteSet(idx, i) : complete(i))}
-                  aria-label={s.done ? `בטל סט ${i + 1}` : `סיים סט ${i + 1}`}
+                  aria-label={s.done ? `בטל סט ${i + 1}` : pending.includes(i) ? `אשר סט ${i + 1}` : `סיים סט ${i + 1}`}
                   aria-pressed={s.done}
-                >✓</button>
+                >{pending.includes(i) && !s.done ? 'אשר' : '✓'}</button>
               </div>
             );
           })}
+          {pending.some((i) => !item.sets[i]?.done) && (
+            <p className="copied-note" role="status">הערכים הועתקו מ{last ? 'האימון הקודם' : 'הסט הקודם'}. תקן אם צריך, ולחץ "אשר" רק אם זה מה שביצעת.</p>
+          )}
           {inputHint && <p className="warn center" role="alert">הזן {showWeight ? 'משקל ו' : ''}{timed ? 'שניות' : 'חזרות'} לפני שמסמנים את הסט.</p>}
           <div className="set-tools">
             <button className="btn ghost sm" onClick={() => st().addSet(idx)}>+ סט</button>
@@ -408,6 +453,14 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
           </section>
         )}
 
+        <div className="set-tools">
+          <button className="btn ghost sm" onClick={() => setPicker('add')}>+ תרגיל לאימון הזה</button>
+          <button className="btn ghost sm danger-text" disabled={active.items.length <= 1}
+            onClick={() => { if (!item.sets.some((x) => x.done) || confirm('להסיר את התרגיל מהאימון הזה? הסטים שסומנו בו יימחקו.')) st().removeActiveItem(idx); }}>
+            הסר תרגיל
+          </button>
+        </div>
+
         <div className="nav-row">
           <button className="btn ghost" disabled={idx === 0} onClick={() => st().setCurrentIndex(idx - 1)}>→ הקודם</button>
           {nextItem
@@ -416,13 +469,13 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
         </div>
       </main>
 
-      <RestBar nextName={nextItem ? EXERCISE_MAP[nextItem.exercise_id].name : null} progress={totalSets ? doneSets / totalSets : 0} />
+      <RestBar nextName={nextItem ? cat.get(nextItem.exercise_id).name : null} progress={totalSets ? doneSets / totalSets : 0} />
 
       {swapOpen && (
         <Sheet title={`חלופות ל${ex.name}`} onClose={() => setSwapOpen(false)}>
           {alternatives.length === 0 && <p className="muted">אין חלופה זמינה עם הציוד שסומן. אפשר לעדכן את רשימת הציוד בפרופיל.</p>}
           {alternatives.map((a) => (
-            <button key={a.id} className="alt" onClick={() => { st().swapExercise(idx, a.id); setSwapOpen(false); }}>
+            <button key={a.id} className="alt" onClick={() => { st().swapExercise(idx, a.id, remember); setSwapOpen(false); }}>
               <img src={`${import.meta.env.BASE_URL}${a.media_urls[0]}`} alt="" />
               <span>
                 <strong>{a.name}</strong>
@@ -430,9 +483,27 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
               </span>
             </button>
           ))}
-          <p className="muted small">הבחירה תישמר גם לאימונים הבאים.</p>
+          <button className="btn ghost block" onClick={() => { setSwapOpen(false); setPicker('swap'); }}>כל התרגילים ל{MUSCLE_LABEL[ex.muscle_group]}…</button>
+          <label className="toggle">
+            <span>זכור את ההחלפה גם לאימונים הבאים</span>
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          </label>
           {item.sets.some((s) => s.done) && <p className="warn">החלפה תאפס את הסטים שכבר סומנו בתרגיל הזה.</p>}
         </Sheet>
+      )}
+
+      {picker && (
+        <ExercisePicker
+          title={picker === 'swap' ? 'בחר תרגיל חלופי' : 'הוסף תרגיל לאימון הזה'}
+          excludeIds={active.items.map((i) => i.exercise_id)}
+          muscle={picker === 'swap' ? ex.muscle_group : undefined}
+          onClose={() => setPicker(null)}
+          onPick={(chosen) => {
+            if (picker === 'swap') st().swapExercise(idx, chosen.id, remember);
+            else st().addActiveExercise(chosen.id);
+            setPicker(null);
+          }}
+        />
       )}
 
       {plateFor !== null && <PlateSheet initial={plateFor} onClose={() => setPlateFor(null)} />}

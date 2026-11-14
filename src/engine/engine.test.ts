@@ -4,6 +4,8 @@ import { EQUIPMENT } from '../data/equipment';
 import { TEMPLATES, nextTemplate } from '../data/programs';
 import { getAlternatives, isExerciseAvailable, resolveExercise } from './alternatives';
 import { suggestNext, warmupSets } from './progression';
+import { exerciseProgress, recomputePRs, workoutText, workoutVolume } from './calc';
+import { buildCatalog, defaultSlot, getTemplate, videoLink } from './catalog';
 import { calcPlates, epley1RM, estimateMinutes, formatClock, gainStatus, nutritionTargets, weeklyRate, weeklyVolume, weightTrend } from './calc';
 
 const allOn = Object.fromEntries(EQUIPMENT.map((e) => [e.id, true]));
@@ -208,5 +210,83 @@ describe('rotation', () => {
     expect(nextTemplate('ppl', 'legs').id).toBe('push');
     expect(nextTemplate('full_body', 'full_a').id).toBe('full_b');
     expect(nextTemplate('full_body', 'legs').id).toBe('full_a');
+  });
+});
+
+describe('derived data after editing history', () => {
+  const W = (id: string, day: number) => ({ id, date: new Date(2026, 10, day).toISOString(), split_type: 'push', total_duration_minutes: 60, efforts: {}, user_id: 'u', wearable_sync_id: null, avg_heart_rate: null }) as never;
+  const S = (id: string, workout_id: string, order_index: number, weight_kg: number, reps: number, exercise_id = 'bench_press', is_pr = false) =>
+    ({ id, workout_id, exercise_id, weight_kg, reps, order_index, is_pr, completed_at: '' });
+  const weighted = (id: string) => EXERCISE_MAP[id]?.tracking === 'weight_reps';
+  const workouts = [W('w1', 1), W('w2', 3), W('w3', 5)];
+
+  it('flags only genuine new bests, never the first workout', () => {
+    const sets = [S('a', 'w1', 0, 60, 10), S('b', 'w2', 0, 62.5, 10), S('c', 'w2', 1, 62.5, 10), S('d', 'w3', 0, 60, 10)];
+    const r = recomputePRs(workouts, sets, weighted);
+    expect(r.map((x) => x.is_pr)).toEqual([false, true, false, false]);
+  });
+  it('correcting a typo removes the false PR and restores the real one', () => {
+    // w2 was logged as 625 instead of 62.5 → it and nothing after it could be a PR
+    const typo = [S('a', 'w1', 0, 60, 10), S('b', 'w2', 0, 625, 10, 'bench_press', true), S('d', 'w3', 0, 65, 10)];
+    expect(recomputePRs(workouts, typo, weighted).map((x) => x.is_pr)).toEqual([false, true, false]);
+    const fixed = typo.map((x) => (x.id === 'b' ? { ...x, weight_kg: 62.5 } : x));
+    expect(recomputePRs(workouts, fixed, weighted).map((x) => x.is_pr)).toEqual([false, true, true]);
+  });
+  it('deleting the workout that held the record promotes the next one', () => {
+    const sets = [S('a', 'w1', 0, 60, 10), S('d', 'w3', 0, 61, 10)];
+    expect(recomputePRs([workouts[0], workouts[2]], sets, weighted).map((x) => x.is_pr)).toEqual([false, true]);
+  });
+  it('timed and bodyweight sets are never PRs; input order does not matter', () => {
+    const sets = [S('p2', 'w2', 0, 0, 90, 'plank'), S('p1', 'w1', 0, 0, 40, 'plank'), S('b', 'w2', 1, 70, 8), S('a', 'w1', 1, 60, 8)];
+    const r = recomputePRs(workouts, sets, weighted);
+    expect(Object.fromEntries(r.map((x) => [x.id, x.is_pr]))).toEqual({ p2: false, p1: false, b: true, a: false });
+  });
+  it('volume ignores timed sets', () => {
+    expect(workoutVolume([S('a', 'w1', 0, 60, 10), S('p', 'w1', 1, 0, 45, 'plank')], (id) => id === 'plank')).toBe(600);
+  });
+  it('per-exercise progress: one point per workout, oldest first', () => {
+    const sets = [S('d', 'w3', 0, 65, 8), S('a', 'w1', 0, 60, 10), S('a2', 'w1', 1, 60, 8)];
+    const p = exerciseProgress(EXERCISE_MAP.bench_press, workouts, sets);
+    expect(p).toHaveLength(2);
+    expect(p[0]).toMatchObject({ top_weight: 60, top_reps: 10, value: 80 });
+    expect(p[1].top_weight).toBe(65);
+  });
+  it('share text lists exercises, sets and volume', () => {
+    const t = workoutText('אימון Push', workouts[0], [S('a', 'w1', 0, 60, 10), S('p', 'w1', 1, 0, 45, 'plank')], buildCatalog([]).get);
+    expect(t).toContain('לחיצת חזה עם מוט: 60×10');
+    expect(t).toContain('פלאנק: 45 שנ׳');
+    expect(t).toContain('נפח כולל: 600');
+  });
+});
+
+describe('catalog', () => {
+  const custom = { ...EXERCISE_MAP.db_curl, id: 'custom_1', name: 'כפיפה בכבל גבוה', is_custom: true, media_urls: [] };
+  it('custom exercises join the catalog and the alternatives', () => {
+    const cat = buildCatalog([custom]);
+    expect(cat.get('custom_1').name).toBe('כפיפה בכבל גבוה');
+    expect(getAlternatives(EXERCISE_MAP.barbell_curl, cat.all, allOn, [], 50).map((e) => e.id)).toContain('custom_1');
+  });
+  it('archived custom exercises resolve for history but are not offered', () => {
+    const cat = buildCatalog([{ ...custom, archived: true }]);
+    expect(cat.get('custom_1').name).toBe('כפיפה בכבל גבוה');
+    expect(cat.all.map((e) => e.id)).not.toContain('custom_1');
+  });
+  it('unknown ids never crash', () => {
+    expect(buildCatalog([]).get('nope').name).toBe('תרגיל שנמחק');
+  });
+  it('template overrides replace slots without touching the base', () => {
+    const slots = [defaultSlot(EXERCISE_MAP.squat)];
+    expect(getTemplate('push', { push: slots }).slots).toEqual(slots);
+    expect(getTemplate('push', {}).slots.length).toBe(9);
+    expect(getTemplate('pull', { push: slots }).slots.length).toBe(9);
+  });
+  it('default slot fits the exercise type', () => {
+    expect(defaultSlot(EXERCISE_MAP.plank)).toMatchObject({ role: 'core', rep_min: 30, rep_max: 60 });
+    expect(defaultSlot(EXERCISE_MAP.squat)).toMatchObject({ role: 'accessory', sets: 3 });
+  });
+  it('video link is a search unless the user supplied a URL', () => {
+    expect(videoLink(EXERCISE_MAP.squat)).toMatchObject({ isSearch: true });
+    expect(videoLink(EXERCISE_MAP.squat)!.url).toContain('Barbell%20Squat');
+    expect(videoLink({ ...custom, video_url: 'https://example.com/v' })).toEqual({ url: 'https://example.com/v', isSearch: false });
   });
 });

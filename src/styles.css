@@ -251,3 +251,40 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ───── v3: reliability + library ───── */
+.set-row.pending input { border-color: var(--warn); color: var(--warn); -webkit-text-fill-color: var(--warn); }
+.set-row.pending .check { border-color: var(--warn); color: var(--warn); font-size: 1rem; }
+.copied-note { background: rgba(251,191,36,.1); color: #fcd77a; border-radius: 10px; padding: 8px 12px; font-size: .88rem; }
+.video-link { display: inline-block; margin: 6px 14px 0; color: var(--blue); font-size: .92rem; text-decoration: none; padding: 6px 0; }
+.small-media { aspect-ratio: auto; height: 56px; font-size: .85rem; }
+.set-tools { flex-wrap: wrap; }
+.backup-due { border-color: #7a5b12; }
+.scroll-x { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.scroll-x .chip { flex: 0 0 auto; }
+.chip.sm { padding: 6px 12px; min-height: 36px; font-size: .85rem; }
+.alt.compact { min-height: 56px; padding: 8px 12px; }
+.list-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.list-row small { display: block; color: var(--muted); }
+.cardio-card .list-row { border: 0; padding: 0; }
+textarea, .select {
+  font: inherit; font-size: 16px; color: var(--text); background: var(--card2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px; width: 100%;
+}
+.select { min-height: 48px; }
+.slot { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; }
+.slot-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.slot-tools { display: flex; flex: 0 0 auto; }
+.slot-tools .link { min-width: 38px; min-height: 38px; font-size: 1.05rem; }
+.slot-tools .link:disabled { opacity: .3; }
+.slot-nums { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.slot-nums label { display: grid; gap: 2px; }
+.slot-nums span { color: var(--muted); font-size: .75rem; }
+.slot-nums input, .edit-row input {
+  width: 100%; min-width: 0; height: 46px; text-align: center; background: var(--card2); border: 1px solid var(--line); border-radius: 10px;
+}
+.edit-ex { display: grid; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.edit-row { display: grid; grid-template-columns: 1fr 1fr 44px; gap: 8px; align-items: center; }
+.edit-row.no-weight { grid-template-columns: 1fr 44px; }
+.chart .dot-pt { fill: var(--accent); }
+.edit-head { color: var(--muted); font-size: .78rem; text-align: center; }

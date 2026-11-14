@@ -36,6 +36,13 @@ export interface Exercise {
   increment_kg: number;
   /** Loaded on an Olympic bar – enables the plate calculator. */
   uses_barbell: boolean;
+  /** English name, used only to build a technique-video search link. */
+  name_en?: string;
+  /** Explicit technique video supplied by the user (custom exercises). */
+  video_url?: string | null;
+  is_custom?: boolean;
+  /** Deleted by the user but still referenced by saved workouts. */
+  archived?: boolean;
 }
 
 export interface GymEquipment {
@@ -125,6 +132,17 @@ export interface BodyMeasurement {
   /** Keys into the local photo store (IndexedDB), not remote URLs. */
   photo_front_url: string | null;
   photo_back_url: string | null;
+}
+
+export type CardioType = 'walk' | 'run' | 'bike' | 'stairs' | 'other';
+
+export interface CardioEntry {
+  id: string;
+  date: string; // ISO
+  type: CardioType;
+  minutes: number;
+  distance_km: number | null;
+  notes: string;
 }
 
 // ---- Active workout (in-progress, persisted so a reload does not lose it) ----

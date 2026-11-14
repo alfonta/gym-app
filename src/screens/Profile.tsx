@@ -1,17 +1,17 @@
 import { useMemo, useRef, useState } from 'react';
-import { BarChart, WeightChart } from '../components/Charts';
+import { BarChart, SimpleLineChart, WeightChart } from '../components/Charts';
 import { Sheet } from '../components/Sheet';
 import { EQUIPMENT } from '../data/equipment';
-import { EXERCISES, EXERCISE_MAP } from '../data/exercises';
+import { EXERCISES } from '../data/exercises';
 import { ANCHOR_EXERCISE_IDS } from '../data/programs';
 import { isExerciseAvailable } from '../engine/alternatives';
-import { best1RM, gainStatus, weeklyRate, weeklyVolume, weightTrend, ymd } from '../engine/calc';
+import { best1RM, exerciseProgress, gainStatus, weeklyRate, weeklyVolume, weightTrend, ymd } from '../engine/calc';
 import { usePhoto } from '../hooks';
-import { exportBackup, importBackup, savePhoto, useStore } from '../store';
+import { backupAgeDays, exportBackup, importBackup, savePhoto, useCatalog, useStore } from '../store';
+import { CustomExercisesSheet, ProgramEditorSheet } from './Library';
 import type { BodyMeasurement } from '../types';
 import { ProfileForm } from './ProfileForm';
 
-const TIMED = new Set(EXERCISES.filter((e) => e.tracking === 'time').map((e) => e.id));
 const shortDate = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
 const numOrNull = (v: string) => (v.trim() === '' || !(Number(v.replace(',', '.')) > 0) ? null : Number(v.replace(',', '.')));
 
@@ -128,18 +128,28 @@ function EquipmentSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Creates the backup file and records that a backup was made. */
+export async function downloadBackup(): Promise<void> {
+  const blob = new Blob([await exportBackup()], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `gym-backup-${ymd(new Date())}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  useStore.getState().markBackup();
+}
+
 function BackupSection() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState('');
 
+  const lastBackup = useStore((s) => s.last_backup_at);
+  const workouts = useStore((s) => s.workouts);
+  const age = backupAgeDays({ last_backup_at: lastBackup, workouts });
+
   const doExport = async () => {
-    const blob = new Blob([await exportBackup()], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `gym-backup-${ymd(new Date())}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setMsg('קובץ הגיבוי נוצר.');
+    await downloadBackup();
+    setMsg('קובץ הגיבוי נוצר. שמור אותו מחוץ לטלפון, למשל בענן או במייל לעצמך.');
   };
 
   const doImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,7 +168,10 @@ function BackupSection() {
   return (
     <section className="card">
       <h2>גיבוי</h2>
-      <p className="muted">הנתונים נשמרים רק על המכשיר הזה. כדאי לייצא גיבוי מדי פעם.</p>
+      <p className="muted">הנתונים נשמרים רק על המכשיר הזה, ולא בענן. מחיקת האפליקציה או החלפת טלפון מוחקות אותם.</p>
+      <p className={age !== null && age >= 14 ? 'warn' : 'muted small'}>
+        {lastBackup ? `גיבוי אחרון: לפני ${age} ימים.` : workouts.length > 0 ? 'עדיין לא בוצע גיבוי.' : 'אין עדיין נתונים לגבות.'}
+      </p>
       <div className="grid2">
         <button className="btn ghost" onClick={doExport}>ייצוא לקובץ</button>
         <button className="btn ghost" onClick={() => fileRef.current?.click()}>ייבוא מקובץ</button>
@@ -179,16 +192,30 @@ export function Profile() {
   const deleteMeasurement = useStore((s) => s.deleteMeasurement);
 
   const [weightInput, setWeightInput] = useState('');
-  const [sheet, setSheet] = useState<'measure' | 'equipment' | 'edit' | null>(null);
+  const cat = useCatalog();
+  const [sheet, setSheet] = useState<'measure' | 'equipment' | 'edit' | 'custom' | 'program' | null>(null);
+  const [progressId, setProgressId] = useState('');
 
   const trend = useMemo(() => weightTrend(bodyweight).slice(-60), [bodyweight]);
-  const volume = useMemo(() => weeklyVolume(workouts, sets, TIMED), [workouts, sets]);
+  const volume = useMemo(() => weeklyVolume(workouts, sets, new Set(cat.all.filter((e) => e.tracking === 'time').map((e) => e.id))), [workouts, sets, cat]);
   const prs = useMemo(
     () => ANCHOR_EXERCISE_IDS
-      .map((id) => ({ ex: EXERCISE_MAP[id], best: best1RM(sets.filter((s) => s.exercise_id === id)) }))
+      .map((id) => ({ ex: cat.get(id), best: best1RM(sets.filter((s) => s.exercise_id === id)) }))
       .filter((x) => x.best > 0),
-    [sets],
+    [sets, cat],
   );
+  // Exercises that have history, most recently trained first.
+  const trained = useMemo(() => {
+    const order = new Map(workouts.map((w) => [w.id, w.date]));
+    const latest = new Map<string, string>();
+    for (const s of sets) {
+      const d = order.get(s.workout_id) ?? '';
+      if (d > (latest.get(s.exercise_id) ?? '')) latest.set(s.exercise_id, d);
+    }
+    return [...latest.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([id]) => cat.get(id));
+  }, [workouts, sets, cat]);
+  const progressEx = trained.find((e) => e.id === progressId) ?? trained[0];
+  const progress = useMemo(() => (progressEx ? exerciseProgress(progressEx, workouts, sets) : []), [progressEx, workouts, sets]);
   const todayLogged = bodyweight.find((b) => b.date === ymd(new Date()));
   const latestTrend = trend[trend.length - 1]?.trend ?? profile.current_weight;
   const goal = profile.goal_weight;
@@ -200,8 +227,8 @@ export function Profile() {
     if (!rate) return 'שקול את עצמך בבוקר, לפחות 3 פעמים בשבוע. אחרי שבוע וחצי של שקילות יופיע כאן קצב השינוי השבועי.';
     if (!gaining) return 'בודקים את המגמה אחת לשבועיים, לא את השקילה הבודדת.';
     const status = gainStatus(rate.pct_per_week);
-    if (status === 'slow') return 'המשקל כמעט לא עולה. הוסף כ-150 קלוריות ליום ובדוק שוב בעוד שבועיים.';
-    if (status === 'fast') return 'העלייה מהירה מדי, וחלק גדול ממנה יהיה שומן. הורד כ-150 קלוריות ליום.';
+    if (status === 'slow') return 'המשקל כמעט לא עולה. כלל אצבע מקובל: להוסיף כ-150 קלוריות ליום ולבדוק שוב בעוד שבועיים.';
+    if (status === 'fast') return 'העלייה מהירה יחסית, וחלק ממנה כנראה שומן. כלל אצבע מקובל: להוריד כ-150 קלוריות ליום.';
     return 'קצב טוב לעלייה נקייה. ממשיכים כך ובודקים שוב בעוד שבועיים.';
   })();
 
@@ -245,7 +272,34 @@ export function Profile() {
             <div key={ex.id} className="trophy"><strong>{Math.round(best * 10) / 10}</strong><span>{ex.name}</span></div>
           ))}
         </div>
-        {prs.length > 0 && <p className="muted small">1RM משוער בק"ג לפי נוסחת Epley.</p>}
+        {prs.length > 0 && <p className="muted small">1RM משוער בק"ג לפי נוסחת Epley. זו הערכה מחושבת, לא מדידה, ואין צורך לנסות להרים אותה.</p>}
+      </section>
+
+      <section className="card">
+        <h2>התקדמות לפי תרגיל</h2>
+        {!progressEx ? <p className="muted">אחרי האימון הראשון יופיע כאן גרף לכל תרגיל.</p> : (
+          <>
+            <select className="select" value={progressEx.id} onChange={(e) => setProgressId(e.target.value)} aria-label="בחר תרגיל">
+              {trained.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+            <SimpleLineChart points={progress.map((p) => ({ label: shortDate(p.date.slice(0, 10)), value: p.value }))} />
+            <p className="muted small">
+              {progressEx.tracking === 'weight_reps' ? '1RM משוער בק"ג (הערכה לפי נוסחה, לא מדידה).' : progressEx.tracking === 'time' ? 'הזמן הטוב ביותר בכל אימון, בשניות.' : 'מספר החזרות הטוב ביותר בכל אימון.'}
+            </p>
+            <table className="mtable">
+              <thead><tr><th>תאריך</th><th>הסט הכבד</th><th>{progressEx.tracking === 'weight_reps' ? '1RM משוער' : 'שיא'}</th></tr></thead>
+              <tbody>
+                {[...progress].reverse().slice(0, 6).map((p) => (
+                  <tr key={p.date}>
+                    <td>{shortDate(p.date.slice(0, 10))}</td>
+                    <td dir="ltr">{progressEx.tracking === 'time' ? `${p.top_reps}s` : `${p.top_weight}×${p.top_reps}`}</td>
+                    <td>{p.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </section>
 
       <section className="card">
@@ -272,14 +326,19 @@ export function Profile() {
           <div><strong>{profile.daily_calories_goal.toLocaleString()}</strong><span>קלוריות ביום</span></div>
           <div><strong>{profile.daily_protein_goal}</strong><span>גרם חלבון ביום</span></div>
         </div>
+        <p className="muted small">הערכה כללית לפי גובה, משקל וגיל. זה לא ייעוץ תזונתי או רפואי אישי.</p>
+        <button className="row-btn" onClick={() => setSheet('program')}><span>עריכת תוכנית האימונים</span><span>←</span></button>
+        <button className="row-btn" onClick={() => setSheet('custom')}><span>התרגילים שלי (הוספת תרגיל)</span><span>←</span></button>
         <button className="row-btn" onClick={() => setSheet('equipment')}><span>ניהול מלאי הציוד בחדר הכושר</span><span>←</span></button>
-        <button className="row-btn" onClick={() => setSheet('edit')}><span>עריכת פרופיל, תוכנית ופלטות</span><span>←</span></button>
+        <button className="row-btn" onClick={() => setSheet('edit')}><span>עריכת פרופיל, סוג תוכנית ופלטות</span><span>←</span></button>
       </section>
 
       <BackupSection />
 
       {sheet === 'measure' && <MeasurementSheet onClose={() => setSheet(null)} />}
       {sheet === 'equipment' && <EquipmentSheet onClose={() => setSheet(null)} />}
+      {sheet === 'custom' && <CustomExercisesSheet onClose={() => setSheet(null)} />}
+      {sheet === 'program' && <ProgramEditorSheet onClose={() => setSheet(null)} />}
       {sheet === 'edit' && (
         <Sheet title="עריכת פרופיל" onClose={() => setSheet(null)}>
           <ProfileForm submitLabel="שמור" onSaved={() => setSheet(null)} />

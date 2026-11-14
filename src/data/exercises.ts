@@ -471,6 +471,7 @@ export const EXERCISES: Exercise[] = defs.map((d) => ({
   tracking: d.track ?? 'weight_reps',
   increment_kg: d.inc ?? 2.5,
   uses_barbell: !!d.bar,
+  name_en: d.media.replace(/_-_/g, ' ').replace(/[_-]/g, ' '),
 }));
 
 export const EXERCISE_MAP: Record<string, Exercise> = Object.fromEntries(

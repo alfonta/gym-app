@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { EXERCISE_MAP } from './data/exercises';
 import { TEMPLATE_MAP } from './data/programs';
 import { useHydrated } from './hooks';
-import { useStore, type WorkoutSummary } from './store';
+import { useCatalog, useStore, type WorkoutSummary } from './store';
+import { workoutText } from './engine/calc';
+import { shareText } from './screens/History';
 import { ActiveWorkoutScreen, fireConfetti } from './screens/ActiveWorkout';
 import { Home } from './screens/Home';
 import { History } from './screens/History';
@@ -25,6 +26,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [inWorkout, setInWorkout] = useState(true);
   const [summary, setSummary] = useState<WorkoutSummary | null>(null);
+  const [shareMsg, setShareMsg] = useState('');
+  const cat = useCatalog();
 
   useEffect(() => {
     if (summary && summary.prs.length > 0) fireConfetti();
@@ -37,6 +40,7 @@ export default function App() {
       <div className="page onboarding">
         <h1>ברוך הבא 💪</h1>
         <p className="muted">כמה פרטים כדי להתאים את התוכנית ואת יעדי התזונה. הכול נשמר רק על המכשיר הזה.</p>
+        <p className="muted small">ההמלצות באפליקציה הן הנחיות כלליות ולא ייעוץ רפואי או אישי. אם יש לך מצב רפואי או כאב, התייעץ עם איש מקצוע לפני שמתחילים.</p>
         <ProfileForm submitLabel="מתחילים" />
       </div>
     );
@@ -79,11 +83,18 @@ export default function App() {
             <div className="pr-list">
               <h3>🏆 שיאים חדשים</h3>
               {summary.prs.map((p, i) => (
-                <div key={i}>{EXERCISE_MAP[p.exercise_id]?.name}: {p.weight_kg} ק"ג × {p.reps}</div>
+                <div key={i}>{cat.get(p.exercise_id).name}: {p.weight_kg} ק"ג × {p.reps}</div>
               ))}
             </div>
           )}
-          <button className="btn primary block" onClick={() => setSummary(null)}>סגור</button>
+          <button className="btn ghost block" onClick={async () => {
+            const st = useStore.getState();
+            const text = workoutText(`אימון ${TEMPLATE_MAP[summary.workout.split_type].name}`, summary.workout, st.sets.filter((x) => x.workout_id === summary.workout.id), cat.get);
+            const r = await shareText(text);
+            setShareMsg(r === 'copied' ? 'הסיכום הועתק.' : r === 'failed' ? 'השיתוף נכשל.' : '');
+          }}>שתף סיכום</button>
+          {shareMsg && <p className="muted center" role="status">{shareMsg}</p>}
+          <button className="btn primary block" onClick={() => { setSummary(null); setShareMsg(''); }}>סגור</button>
         </Sheet>
       )}
     </div>
