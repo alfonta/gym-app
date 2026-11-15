@@ -176,6 +176,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [shake, setShake] = useState<number | null>(null);
   const [inputHint, setInputHint] = useState(false);
+  const [overview, setOverview] = useState(false);
   // Sets whose values were copied in and still await an explicit confirmation.
   const [pending, setPending] = useState<number[]>([]);
   const [remember, setRemember] = useState(true);
@@ -316,6 +317,11 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
     ? warmupSets(suggestion?.weight_kg ?? num(item.sets[0].weight) ?? 0, profile.bar_weight_kg)
     : [];
   const firstTime = !last && !item.sets.some((s) => s.done);
+  // Time still needed: work + rest for every set that is not ticked yet.
+  const remainingMinutes = Math.ceil(active.items.reduce((sum, it) => {
+    const e = cat.get(it.exercise_id);
+    return sum + it.sets.filter((x) => !x.done).length * (e.rest_time_seconds + (e.is_core ? 35 : 45));
+  }, 0) / 60);
   const video = videoLink(ex);
 
   return (
@@ -331,6 +337,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
       </header>
 
       <nav className="strip" aria-label="תרגילים" ref={stripRef}>
+        <button className="overview-btn" onClick={() => setOverview(true)} aria-label="סקירת האימון">☰ סקירה</button>
         {active.items.map((it, i) => {
           const d = it.sets.every((s) => s.done);
           return (
@@ -512,6 +519,43 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
       )}
 
       {plateFor !== null && <PlateSheet initial={plateFor} onClose={() => setPlateFor(null)} />}
+
+      {overview && (
+        <Sheet title={`${tpl.name} · סקירת האימון`} onClose={() => setOverview(false)}>
+          <div className="stats">
+            <div><strong>{doneSets}/{totalSets}</strong><span>סטים</span></div>
+            <div><strong dir="ltr">{formatClock((now - active.started_at) / 1000)}</strong><span>זמן שעבר</span></div>
+            <div><strong>{remainingMinutes}</strong><span>דקות נותרו (הערכה)</span></div>
+          </div>
+          {active.items.map((it, i) => {
+            const e = cat.get(it.exercise_id);
+            const done = it.sets.filter((x) => x.done);
+            const state = done.length === it.sets.length ? 'done' : done.length > 0 ? 'partial' : '';
+            const isTimed = e.tracking === 'time';
+            return (
+              <button key={i} className={`ov-row ${state} ${i === idx ? 'cur' : ''}`} aria-current={i === idx}
+                onClick={() => { st().setCurrentIndex(i); setOverview(false); }}>
+                <span className="ov-n">{state === 'done' ? '✓' : i + 1}</span>
+                <span className="ov-main">
+                  <strong>{e.name}</strong>
+                  <small>
+                    {it.role === 'anchor' ? 'עוגן' : it.role === 'core' ? 'בטן' : MUSCLE_LABEL[e.muscle_group]}
+                    {' · '}{it.sets.length} × <span dir="ltr">{it.rep_min}–{it.rep_max}</span>{isTimed ? ' שנ׳' : ''}
+                    {it.caution ? ' · ⚠️ מופחת' : ''}{i === idx ? ' · עכשיו' : ''}
+                  </small>
+                  {done.length > 0 && (
+                    <small className="ov-log" dir="ltr">
+                      {done.map((x) => (isTimed ? `${x.reps}s` : Number(x.weight) > 0 ? `${x.weight}×${x.reps}` : x.reps) + (x.is_pr ? '🏆' : '')).join('  ')}
+                    </small>
+                  )}
+                </span>
+                <span className="ov-count">{done.length}/{it.sets.length}</span>
+              </button>
+            );
+          })}
+          <p className="muted small">לחיצה על תרגיל קופצת אליו. אפשר לבצע את התרגילים בכל סדר.</p>
+        </Sheet>
+      )}
 
       {confirmFinish && (
         <Sheet title="לסיים את האימון?" onClose={() => setConfirmFinish(false)}>

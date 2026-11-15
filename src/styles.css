@@ -306,3 +306,16 @@ span.chip { display: inline-flex; align-items: center; }
 .injury-row .chips { flex-wrap: nowrap; gap: 6px; }
 .impact { padding: 8px 0; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
 .injury-banner { background: rgba(251,191,36,.1); color: #fcd77a; border-radius: 12px; padding: 10px 12px; font-size: .9rem; }
+
+/* ───── v6: workout overview ───── */
+.overview-btn { flex: 0 0 auto; height: 38px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--blue); background: none; color: var(--blue); font-size: .88rem; font-weight: 600; white-space: nowrap; }
+.ov-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: start; background: var(--card2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-height: 60px; }
+.ov-row.cur { border-color: var(--accent); }
+.ov-row.done { opacity: .7; }
+.ov-n { flex: 0 0 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--card); color: var(--muted); font-weight: 700; font-size: .9rem; }
+.ov-row.done .ov-n { background: #1d3a29; color: var(--accent); }
+.ov-row.partial .ov-n { color: var(--warn); }
+.ov-main { flex: 1; min-width: 0; display: grid; }
+.ov-main small { color: var(--muted); }
+.ov-log { color: var(--accent) !important; font-variant-numeric: tabular-nums; text-align: end; }
+.ov-count { color: var(--muted); font-variant-numeric: tabular-nums; direction: ltr; }
