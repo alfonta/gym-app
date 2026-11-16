@@ -10,6 +10,7 @@ import { EQUIPMENT, type EquipmentDef } from './data/equipment';
 import { advanceRotation, initialRotation, scheduleOf } from './data/programs';
 import { applyVariety } from './engine/variety';
 import { applyInjuries, type InjuryStatus } from './engine/injury';
+import { workoutFeedback, type FeedbackItem, type WorkoutFeedback } from './engine/feedback';
 import { isExerciseAvailable, resolveExercise } from './engine/alternatives';
 import { best1RM, epley1RM, recomputePRs, ymd } from './engine/calc';
 import { buildCatalog, defaultSlot, getTemplate, type Catalog, type TemplateOverrides } from './engine/catalog';
@@ -29,6 +30,8 @@ export interface WorkoutSummary {
   sets: number;
   volume: number;
   prs: { exercise_id: string; weight_kg: number; reps: number }[];
+  feedback: WorkoutFeedback;
+  cardio: CardioEntry[];
 }
 
 interface Data {
@@ -74,6 +77,8 @@ interface Actions {
   addActiveExercise: (exerciseId: string) => void;
   removeActiveItem: (item: number) => void;
   setEffort: (item: number, effort: Effort) => void;
+  addActiveCardio: (c: Omit<CardioEntry, 'id' | 'date' | 'workout_id'>) => void;
+  removeActiveCardio: (index: number) => void;
   adjustRest: (deltaSeconds: number) => void;
   skipRest: () => void;
   logBodyweight: (weight: number, date?: string) => void;
@@ -215,20 +220,40 @@ export const useStore = create<Store>()(
               if (s.is_pr) prs.push({ exercise_id: item.exercise_id, weight_kg, reps });
             });
           }
+          const cardio: CardioEntry[] = (active.cardio ?? []).map((c) => ({
+            ...c, id: uid(), date: now.toISOString(), workout_id: logs.length ? workout.id : null,
+          }));
           if (logs.length === 0) {
-            set({ active: null });
+            // Nothing lifted: keep any cardio as a standalone entry, drop the empty workout.
+            set((s) => ({ active: null, cardio: [...s.cardio, ...cardio] }));
             return null;
           }
+          const before = get();
+          const items: FeedbackItem[] = active.items.map((item) => {
+            const ex = c.get(item.exercise_id);
+            return {
+              ex, rep_min: item.rep_min, rep_max: item.rep_max, planned_sets: item.sets.length,
+              done: item.sets.filter((x) => x.done).map((x) => ({ weight_kg: Number(x.weight) || 0, reps: Number(x.reps) || 0 })),
+              effort: item.effort, caution: !!item.caution,
+              history: historyFor(ex.id, before.workouts, before.sets),
+            };
+          });
+          const prevSame = [...before.workouts].filter((w) => w.split_type === workout.split_type).sort((a, b) => b.date.localeCompare(a.date))[0];
+          const prevVolume = prevSame
+            ? before.sets.filter((x) => x.workout_id === prevSame.id && c.get(x.exercise_id).tracking !== 'time').reduce((n, x) => n + x.weight_kg * x.reps, 0)
+            : null;
+          const feedback = workoutFeedback(items, { prs: prs.length, volume, prevVolume });
+          workout.verdict = feedback.headline;
           set((s) => {
             const schedule = s.profile ? scheduleOf(s.profile) : [];
             const lastBefore = [...s.workouts].sort((a, b) => b.date.localeCompare(a.date))[0]?.split_type ?? null;
             const pointer = s.rotation_index ?? initialRotation(schedule, lastBefore);
             return {
-              active: null, workouts: [...s.workouts, workout], sets: [...s.sets, ...logs],
+              active: null, workouts: [...s.workouts, workout], sets: [...s.sets, ...logs], cardio: [...s.cardio, ...cardio],
               rotation_index: schedule.length ? advanceRotation(schedule, pointer, workout.split_type) : null,
             };
           });
-          return { workout, sets: logs.length, volume: Math.round(volume), prs };
+          return { workout, sets: logs.length, volume: Math.round(volume), prs, feedback, cardio };
         },
 
         setCurrentIndex: (i) => set((s) => (s.active ? { active: { ...s.active, current_index: Math.max(0, Math.min(s.active.items.length - 1, i)) } } : {})),
@@ -310,6 +335,9 @@ export const useStore = create<Store>()(
             return { active: { ...s.active, items, current_index: Math.min(s.active.current_index, items.length - 1) } };
           }),
 
+        addActiveCardio: (c) => set((s) => (s.active ? { active: { ...s.active, cardio: [...(s.active.cardio ?? []), c] } } : {})),
+        removeActiveCardio: (index) => set((s) => (s.active ? { active: { ...s.active, cardio: (s.active.cardio ?? []).filter((_, i) => i !== index) } } : {})),
+
         setEffort: (item, effort) => set((s) => (s.active ? { active: mapItem(s.active, item, (it) => ({ ...it, effort })) } : {})),
 
         adjustRest: (delta) =>
@@ -344,7 +372,7 @@ export const useStore = create<Store>()(
         deleteWorkout: (id) =>
           set((s) => {
             const workouts = s.workouts.filter((w) => w.id !== id);
-            return { workouts, sets: recomputePRs(workouts, s.sets.filter((x) => x.workout_id !== id), weighted) };
+            return { workouts, cardio: s.cardio.filter((c) => c.workout_id !== id), sets: recomputePRs(workouts, s.sets.filter((x) => x.workout_id !== id), weighted) };
           }),
 
         updateWorkoutSets: (workoutId, edited) =>
@@ -356,7 +384,8 @@ export const useStore = create<Store>()(
               completed_at: (e.id && old.get(e.id)?.completed_at) || new Date().toISOString(),
             }));
             // A workout with no sets left is removed rather than kept as an empty shell.
-            const workouts = fresh.length ? s.workouts : s.workouts.filter((w) => w.id !== workoutId);
+            // The stored feedback described the workout as logged; after an edit it no longer applies.
+            const workouts = fresh.length ? s.workouts.map((w) => (w.id === workoutId ? { ...w, verdict: null } : w)) : s.workouts.filter((w) => w.id !== workoutId);
             const sets = [...s.sets.filter((x) => x.workout_id !== workoutId), ...fresh];
             return { workouts, sets: recomputePRs(workouts, sets, weighted) };
           }),

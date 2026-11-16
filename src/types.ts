@@ -90,6 +90,8 @@ export interface Workout {
   // Future proofing – not used in the UI yet.
   wearable_sync_id: string | null;
   avg_heart_rate: number | null;
+  /** Headline of the end-of-workout feedback; cleared if the workout is edited later. */
+  verdict?: string | null;
 }
 
 export interface SetLog {
@@ -145,7 +147,7 @@ export interface BodyMeasurement {
   photo_back_url: string | null;
 }
 
-export type CardioType = 'walk' | 'run' | 'bike' | 'stairs' | 'other';
+export type CardioType = 'walk' | 'run' | 'bike' | 'stairs' | 'elliptical' | 'rowing' | 'other';
 
 export interface CardioEntry {
   id: string;
@@ -154,6 +156,11 @@ export interface CardioEntry {
   minutes: number;
   distance_km: number | null;
   notes: string;
+  calories?: number | null;
+  /** True when the calories were estimated by the app rather than entered. */
+  calories_estimated?: boolean;
+  /** Set when the cardio was done as part of a strength workout. */
+  workout_id?: string | null;
 }
 
 // ---- Active workout (in-progress, persisted so a reload does not lose it) ----
@@ -191,4 +198,6 @@ export interface ActiveWorkout {
   items: ActiveItem[];
   current_index: number;
   rest: RestState | null;
+  /** Cardio done as part of this workout; saved together with it. */
+  cardio?: Omit<CardioEntry, 'id' | 'date' | 'workout_id'>[];
 }

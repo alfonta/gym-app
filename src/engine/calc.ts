@@ -214,7 +214,7 @@ export function exerciseProgress(ex: Exercise, workouts: Workout[], sets: SetLog
 }
 
 /** Plain-text summary for sharing. */
-export function workoutText(title: string, workout: Workout, sets: SetLog[], getExercise: (id: string) => Exercise): string {
+export function workoutText(title: string, workout: Workout, sets: SetLog[], getExercise: (id: string) => Exercise, extra: string[] = []): string {
   const d = new Date(workout.date);
   const lines = [`${title} · ${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()} · ${workout.total_duration_minutes} דקות`];
   const groups: { id: string; sets: SetLog[] }[] = [];
@@ -227,6 +227,7 @@ export function workoutText(title: string, workout: Workout, sets: SetLog[], get
     const body = g.sets.map((s) => (ex.tracking === 'time' ? `${s.reps} שנ׳` : s.weight_kg > 0 ? `${s.weight_kg}×${s.reps}` : `${s.reps}`) + (s.is_pr ? ' (שיא)' : '')).join(', ');
     lines.push(`${ex.name}: ${body}`);
   }
+  lines.push(...extra);
   lines.push(`נפח כולל: ${workoutVolume(sets, (id) => getExercise(id).tracking === 'time').toLocaleString('en-US')} ק"ג`);
   return lines.join('\n');
 }

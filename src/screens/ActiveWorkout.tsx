@@ -10,6 +10,7 @@ import { historyFor, useCatalog, useStore, type WorkoutSummary } from '../store'
 import { videoLink } from '../engine/catalog';
 import { isBlocked } from '../engine/injury';
 import { ExercisePicker } from './Library';
+import { CardioForm, cardioLine } from '../components/CardioForm';
 import type { Effort, Exercise } from '../types';
 import { Sheet } from '../components/Sheet';
 
@@ -177,6 +178,8 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
   const [shake, setShake] = useState<number | null>(null);
   const [inputHint, setInputHint] = useState(false);
   const [overview, setOverview] = useState(false);
+  const [cardioOpen, setCardioOpen] = useState(false);
+  const cardio = active.cardio ?? [];
   // Sets whose values were copied in and still await an explicit confirmation.
   const [pending, setPending] = useState<number[]>([]);
   const [remember, setRemember] = useState(true);
@@ -467,6 +470,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
 
         <div className="set-tools">
           <button className="btn ghost sm" onClick={() => setPicker('add')}>+ תרגיל לאימון הזה</button>
+          <button className="btn ghost sm" onClick={() => setCardioOpen(true)}>+ אירובי{cardio.length > 0 ? ` (${cardio.length})` : ''}</button>
           <button className="btn ghost sm danger-text" disabled={active.items.length <= 1}
             onClick={() => { if (!item.sets.some((x) => x.done) || confirm('להסיר את התרגיל מהאימון הזה? הסטים שסומנו בו יימחקו.')) st().removeActiveItem(idx); }}>
             הסר תרגיל
@@ -553,17 +557,38 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
               </button>
             );
           })}
+          {cardio.map((c, i) => (
+            <div key={i} className="ov-row done-cardio">
+              <span className="ov-n">🏃</span>
+              <span className="ov-main"><strong>אירובי</strong><small>{cardioLine(c)}</small></span>
+              <button className="link danger-text" aria-label="הסר אירובי" onClick={() => st().removeActiveCardio(i)}>✕</button>
+            </div>
+          ))}
+          <button className="btn ghost block" onClick={() => { setOverview(false); setCardioOpen(true); }}>+ הוסף אירובי לאימון</button>
           <p className="muted small">לחיצה על תרגיל קופצת אליו. אפשר לבצע את התרגילים בכל סדר.</p>
+        </Sheet>
+      )}
+
+      {cardioOpen && (
+        <Sheet title="אירובי באימון הזה" onClose={() => setCardioOpen(false)}>
+          {cardio.map((c, i) => (
+            <div key={i} className="list-row">
+              <span>{cardioLine(c)}</span>
+              <button className="link danger-text" aria-label="הסר אירובי" onClick={() => st().removeActiveCardio(i)}>✕</button>
+            </div>
+          ))}
+          <CardioForm weightKg={profile.current_weight} onSave={(c) => { st().addActiveCardio({ ...c, notes: '' }); setCardioOpen(false); }} />
         </Sheet>
       )}
 
       {confirmFinish && (
         <Sheet title="לסיים את האימון?" onClose={() => setConfirmFinish(false)}>
-          <p>הושלמו {doneSets} מתוך {totalSets} סטים. רק סטים שסומנו יישמרו.</p>
+          <p>הושלמו {doneSets} מתוך {totalSets} סטים. רק סטים שסומנו יישמרו.{cardio.length > 0 ? ' האירובי שהוספת יישמר גם הוא.' : ''}</p>
           <div className="stack">
             {doneSets > 0 && <button className="btn primary" onClick={finish}>סיים ושמור</button>}
             <button className="btn ghost" onClick={() => setConfirmFinish(false)}>המשך אימון</button>
-            <button className="btn ghost danger-text" onClick={doneSets > 0 ? discard : finish}>בטל אימון בלי לשמור</button>
+            {doneSets === 0 && cardio.length > 0 && <button className="btn primary" onClick={finish}>שמור רק את האירובי</button>}
+            <button className="btn ghost danger-text" onClick={doneSets > 0 || cardio.length > 0 ? discard : finish}>בטל אימון בלי לשמור</button>
           </div>
         </Sheet>
       )}

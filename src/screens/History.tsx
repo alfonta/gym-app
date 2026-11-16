@@ -3,9 +3,9 @@ import { Sheet } from '../components/Sheet';
 import { TEMPLATE_MAP } from '../data/programs';
 import { weekStart, workoutText, workoutVolume } from '../engine/calc';
 import { useCatalog, useStore, type EditedSet } from '../store';
-import type { CardioType, SetLog, Workout } from '../types';
+import type { SetLog, Workout } from '../types';
+import { CARDIO_LABEL, CardioForm, cardioLine } from '../components/CardioForm';
 
-const CARDIO_LABEL: Record<CardioType, string> = { walk: 'הליכה', run: 'ריצה', bike: 'אופניים', stairs: 'מדרגות', other: 'אחר' };
 const dateLabel = (iso: string) => new Date(iso).toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'numeric', year: '2-digit' });
 const toNum = (v: string) => Number(v.replace(',', '.'));
 
@@ -91,26 +91,10 @@ function WorkoutEditor({ workout, sets, onClose }: { workout: Workout; sets: Set
 
 function CardioSheet({ onClose }: { onClose: () => void }) {
   const addCardio = useStore((s) => s.addCardio);
-  const [type, setType] = useState<CardioType>('walk');
-  const [minutes, setMinutes] = useState('');
-  const [km, setKm] = useState('');
-  const [error, setError] = useState('');
-  const save = () => {
-    if (!(toNum(minutes) > 0)) return setError('הזן משך בדקות.');
-    addCardio({ date: new Date().toISOString(), type, minutes: toNum(minutes), distance_km: toNum(km) > 0 ? toNum(km) : null, notes: '' });
-    onClose();
-  };
+  const weight = useStore((s) => s.profile?.current_weight ?? 70);
   return (
     <Sheet title="אימון אירובי" onClose={onClose}>
-      <div className="chips">
-        {(Object.keys(CARDIO_LABEL) as CardioType[]).map((t) => <button key={t} className={`chip ${type === t ? 'on' : ''}`} onClick={() => setType(t)}>{CARDIO_LABEL[t]}</button>)}
-      </div>
-      <div className="grid2">
-        <label className="field"><span>משך (דקות)</span><input inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} aria-label="משך בדקות" /></label>
-        <label className="field"><span>מרחק בק"מ (לא חובה)</span><input inputMode="decimal" value={km} onChange={(e) => setKm(e.target.value)} aria-label="מרחק" /></label>
-      </div>
-      {error && <p className="warn" role="alert">{error}</p>}
-      <button className="btn primary block" onClick={save}>שמור</button>
+      <CardioForm weightKg={weight} onSave={(c) => { addCardio({ ...c, date: new Date().toISOString(), notes: '', workout_id: null }); onClose(); }} />
     </Sheet>
   );
 }
@@ -130,7 +114,8 @@ export function History() {
   const feed = useMemo(
     () => [
       ...workouts.map((w) => ({ kind: 'workout' as const, date: w.date, w })),
-      ...cardio.map((c) => ({ kind: 'cardio' as const, date: c.date, c })),
+      // Cardio done inside a workout is shown with that workout, not as a separate entry.
+      ...cardio.filter((c) => !c.workout_id).map((c) => ({ kind: 'cardio' as const, date: c.date, c })),
     ].sort((a, b) => b.date.localeCompare(a.date)),
     [workouts, cardio],
   );
@@ -148,7 +133,7 @@ export function History() {
   };
 
   const share = async (w: Workout) => {
-    const text = workoutText(`אימון ${TEMPLATE_MAP[w.split_type]?.name ?? ''}`, w, setsOf(w.id), cat.get);
+    const text = workoutText(`אימון ${TEMPLATE_MAP[w.split_type]?.name ?? ''}`, w, setsOf(w.id), cat.get, cardio.filter((c) => c.workout_id === w.id).map((c) => `אירובי: ${cardioLine(c)}`));
     const r = await shareText(text);
     setMsg(r === 'copied' ? 'הסיכום הועתק. אפשר להדביק אותו בכל מקום.' : r === 'failed' ? 'לא הצלחתי לשתף או להעתיק.' : '');
   };
@@ -169,7 +154,7 @@ export function History() {
           <div className="list-row">
             <span>
               <strong>🏃 {CARDIO_LABEL[item.c.type]}</strong>
-              <small>{dateLabel(item.c.date)} · {item.c.minutes} דק׳{item.c.distance_km ? ` · ${item.c.distance_km} ק"מ` : ''}</small>
+              <small>{dateLabel(item.c.date)} · {cardioLine(item.c).split(' · ').slice(1).join(' · ')}</small>
             </span>
             <button className="link danger-text" aria-label="מחק אירובי" onClick={() => { if (confirm('למחוק את האימון האירובי?')) deleteCardio(item.c.id); }}>✕</button>
           </div>
@@ -185,6 +170,10 @@ export function History() {
           </button>
           {open === item.w.id && (
             <div className="hist">
+              {item.w.verdict && <div className="tag">משוב: {item.w.verdict}</div>}
+              {cardio.filter((c) => c.workout_id === item.w.id).map((c) => (
+                <div key={c.id} className="hist-ex"><strong>🏃 אירובי</strong><span>{cardioLine(c)}</span></div>
+              ))}
               {grouped(item.w.id).map((g) => {
                 const ex = cat.get(g.exercise_id);
                 return (

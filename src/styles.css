@@ -319,3 +319,20 @@ span.chip { display: inline-flex; align-items: center; }
 .ov-main small { color: var(--muted); }
 .ov-log { color: var(--accent) !important; font-variant-numeric: tabular-nums; text-align: end; }
 .ov-count { color: var(--muted); font-variant-numeric: tabular-nums; direction: ltr; }
+
+/* ───── v7: feedback + in-workout cardio ───── */
+.verdict { border-radius: 14px; padding: 14px; display: grid; gap: 2px; text-align: center; background: var(--card2); border: 1px solid var(--line); }
+.verdict strong { font-size: 1.5rem; }
+.verdict span { color: var(--muted); font-size: .82rem; }
+.verdict.strong { border-color: var(--accent); } .verdict.strong strong { color: var(--accent); }
+.verdict.weak { border-color: var(--warn); } .verdict.weak strong { color: var(--warn); }
+.verdict.partial strong { color: var(--muted); }
+.fb-note { font-size: .93rem; }
+.fb-list { display: grid; gap: 6px; }
+.fb-list h3 { font-size: 1rem; }
+.fb-row { display: flex; gap: 10px; align-items: flex-start; background: var(--card2); border-radius: 12px; padding: 8px 12px; }
+.fb-row small { display: block; color: var(--muted); }
+.fb-arrow { flex: 0 0 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--card); color: var(--muted); }
+.fb-row.increase .fb-arrow { background: #1d3a29; color: var(--accent); }
+.fb-row.decrease .fb-arrow { background: rgba(251,191,36,.15); color: var(--warn); }
+.ov-row.done-cardio { cursor: default; }

@@ -10,6 +10,7 @@ import { History } from './screens/History';
 import { Profile } from './screens/Profile';
 import { ProfileForm } from './screens/ProfileForm';
 import { Sheet } from './components/Sheet';
+import { cardioLine } from './components/CardioForm';
 
 type Tab = 'home' | 'history' | 'profile';
 
@@ -72,13 +73,37 @@ export default function App() {
       </nav>
 
       {summary && (
-        <Sheet title="האימון נשמר 🎉" onClose={() => setSummary(null)}>
+        <Sheet title="סיכום האימון" onClose={() => setSummary(null)}>
+          <div className={`verdict ${summary.feedback.verdict}`}>
+            <strong>{summary.feedback.headline}</strong>
+            <span>האימון נשמר</span>
+          </div>
           <div className="stats">
             <div><strong>{summary.workout.total_duration_minutes}</strong><span>דקות</span></div>
             <div><strong>{summary.sets}</strong><span>סטים</span></div>
             <div><strong>{summary.volume.toLocaleString()}</strong><span>ק"ג נפח</span></div>
           </div>
           <p className="muted">{TEMPLATE_MAP[summary.workout.split_type].name}</p>
+          {summary.cardio.map((c) => <p key={c.id} className="muted">🏃 אירובי: {cardioLine(c)}</p>)}
+          {summary.feedback.notes.map((n) => <p key={n} className="fb-note">{n}</p>)}
+          {summary.feedback.exercises.length > 0 && (
+            <div className="fb-list">
+              <h3>לפעם הבאה</h3>
+              {summary.feedback.exercises.map((e) => (
+                <div key={e.exercise_id} className={`fb-row ${e.next}`}>
+                  <span className="fb-arrow" aria-hidden>{e.next === 'increase' ? '↑' : e.next === 'decrease' ? '↓' : '＝'}</span>
+                  <span>
+                    <strong>{e.name}</strong>
+                    <small>
+                      {e.trend === 'up' ? 'השתפר מהפעם הקודמת. ' : e.trend === 'down' ? 'ירד מהפעם הקודמת. ' : e.trend === 'same' ? 'דומה לפעם הקודמת. ' : ''}
+                      {e.message}
+                    </small>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="muted small">המשוב מחושב לפי המספרים שרשמת מול הפעם הקודמת. הוא לא יודע כמה ישנת או אכלת, אז קח אותו כהכוונה ולא כפסיקה.</p>
           {summary.prs.length > 0 && (
             <div className="pr-list">
               <h3>🏆 שיאים חדשים</h3>
@@ -89,7 +114,8 @@ export default function App() {
           )}
           <button className="btn ghost block" onClick={async () => {
             const st = useStore.getState();
-            const text = workoutText(`אימון ${TEMPLATE_MAP[summary.workout.split_type].name}`, summary.workout, st.sets.filter((x) => x.workout_id === summary.workout.id), cat.get);
+            const text = workoutText(`אימון ${TEMPLATE_MAP[summary.workout.split_type].name}`, summary.workout, st.sets.filter((x) => x.workout_id === summary.workout.id), cat.get,
+              [...summary.cardio.map((c) => `אירובי: ${cardioLine(c)}`), `משוב: ${summary.feedback.headline}`]);
             const r = await shareText(text);
             setShareMsg(r === 'copied' ? 'הסיכום הועתק.' : r === 'failed' ? 'השיתוף נכשל.' : '');
           }}>שתף סיכום</button>

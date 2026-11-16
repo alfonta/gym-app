@@ -4,6 +4,8 @@ import { EQUIPMENT } from '../data/equipment';
 import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf } from '../data/programs';
 import { applyVariety } from './variety';
 import { buildWorkout } from './builder';
+import { workoutFeedback, type FeedbackItem } from './feedback';
+import { estimateCalories } from '../components/CardioForm';
 import { applyInjuries, isBlocked, stress } from './injury';
 import { getAlternatives, isExerciseAvailable, resolveExercise } from './alternatives';
 import { suggestNext, warmupSets } from './progression';
@@ -479,5 +481,86 @@ describe('injury mode', () => {
     expect(isBlocked(EXERCISE_MAP.squat, { knee: 'avoid' })).toBe(true);
     expect(isBlocked(EXERCISE_MAP.squat, { knee: 'reduce' })).toBe(false);
     expect(isBlocked(EXERCISE_MAP.squat, {})).toBe(false);
+  });
+});
+
+describe('end-of-workout feedback', () => {
+  const s = (w: number, ...reps: number[]) => reps.map((r) => ({ weight_kg: w, reps: r }));
+  const item = (id: string, done: ReturnType<typeof s>, prev: ReturnType<typeof s> | null, over: Partial<FeedbackItem> = {}): FeedbackItem => ({
+    ex: EXERCISE_MAP[id], rep_min: 8, rep_max: 12, planned_sets: 3, done, effort: 'ok', caution: false,
+    history: prev ? [{ sets: prev, effort: 'ok' }] : [], ...over,
+  });
+  const fb = (items: FeedbackItem[], prs = 0, volume = 1000, prevVolume: number | null = 1000) => workoutFeedback(items, { prs, volume, prevVolume });
+
+  it('first ever workout is a baseline, not a judgement', () => {
+    const r = fb([item('bench_press', s(40, 10, 9, 8), null), item('lat_pulldown', s(35, 10, 10, 9), null)], 0, 1000, null);
+    expect(r.verdict).toBe('baseline');
+    expect(r.exercises.every((e) => e.trend === 'new')).toBe(true);
+  });
+  it('most exercises improved → strong', () => {
+    const r = fb([
+      item('bench_press', s(42.5, 10, 9, 8), s(40, 10, 9, 8)),
+      item('lat_pulldown', s(35, 11, 11, 10), s(35, 10, 10, 9)),
+      item('cable_fly', s(10, 12, 12, 12), s(10, 12, 12, 12)),
+    ]);
+    expect(r.verdict).toBe('strong');
+    expect(r.exercises.map((e) => e.trend)).toEqual(['up', 'up', 'same']);
+  });
+  it('a PR makes it strong even if the rest is flat', () => {
+    expect(fb([item('bench_press', s(40, 10, 9, 8), s(40, 10, 9, 8)), item('cable_fly', s(10, 12, 12, 12), s(10, 12, 12, 12))], 1).verdict).toBe('strong');
+  });
+  it('flat session → solid', () => {
+    expect(fb([item('bench_press', s(40, 10, 9, 8), s(40, 10, 9, 8)), item('cable_fly', s(10, 12, 12, 11), s(10, 12, 12, 12))]).verdict).toBe('solid');
+  });
+  it('most exercises dropped → weak, with a recovery note', () => {
+    const r = fb([
+      item('bench_press', s(40, 7, 6, 5), s(40, 10, 9, 8)),
+      item('lat_pulldown', s(30, 9, 8, 8), s(35, 10, 10, 9)),
+      item('cable_fly', s(10, 12, 12, 12), s(10, 12, 12, 12)),
+    ]);
+    expect(r.verdict).toBe('weak');
+    expect(r.notes.join(' ')).toContain('שינה');
+  });
+  it('less than 60% of the sets → partial, whatever the numbers', () => {
+    const r = fb([item('bench_press', s(45, 12), s(40, 10, 9, 8)), item('lat_pulldown', [], s(35, 10, 10, 9))]);
+    expect(r.verdict).toBe('partial');
+    expect(r.completion).toBeCloseTo(1 / 6);
+    // An exercise that was skipped entirely gets no advice.
+    expect(r.exercises.map((e) => e.exercise_id)).toEqual(['bench_press']);
+  });
+  it('next step per exercise: increase, hold, decrease', () => {
+    const r = fb([
+      item('bench_press', s(40, 12, 12, 12), s(40, 11, 11, 10)),
+      item('lat_pulldown', s(35, 10, 9, 9), s(35, 9, 9, 8)),
+      item('cable_fly', s(10, 6, 5, 5), s(10, 7, 6, 5), { history: [{ sets: s(10, 7, 6, 5), effort: 'hard' }] }),
+    ]);
+    expect(r.exercises.map((e) => e.next)).toEqual(['increase', 'hold', 'decrease']);
+    expect(r.exercises[0].message).toContain('42.5');
+    expect(r.exercises[1].message).toContain('35');
+  });
+  it('top of range but rated too hard → hold, not increase', () => {
+    expect(fb([item('bench_press', s(40, 12, 12, 12), s(40, 11, 11, 10), { effort: 'hard' })]).exercises[0].next).toBe('hold');
+  });
+  it('injury caution never recommends more load', () => {
+    const r = fb([item('bench_press', s(40, 12, 12, 12), s(40, 11, 11, 10), { caution: true })]);
+    expect(r.exercises[0].next).toBe('hold');
+    expect(r.exercises[0].message).toContain('פציעה');
+  });
+  it('core work is left out of the per-exercise advice', () => {
+    const r = fb([item('bench_press', s(40, 10, 9, 8), s(40, 10, 9, 8)), item('plank', s(0, 45, 40), s(0, 40, 35), { planned_sets: 2 })]);
+    expect(r.exercises.map((e) => e.exercise_id)).toEqual(['bench_press']);
+  });
+  it('reports a clear change in total volume', () => {
+    expect(fb([item('bench_press', s(40, 10, 9, 8), s(40, 10, 9, 8))], 0, 1200, 1000).volume_change_pct).toBe(20);
+    expect(fb([item('bench_press', s(40, 10, 9, 8), s(40, 10, 9, 8))], 0, 1200, null).volume_change_pct).toBeNull();
+  });
+});
+
+describe('cardio calories estimate', () => {
+  it('scales with time and body weight, and running costs more than walking', () => {
+    expect(estimateCalories('walk', 30, 70)).toBe(135);
+    expect(estimateCalories('walk', 60, 70)).toBe(265);
+    expect(estimateCalories('run', 30, 70)).toBeGreaterThan(estimateCalories('walk', 30, 70) * 2);
+    expect(estimateCalories('bike', 30, 90)).toBeGreaterThan(estimateCalories('bike', 30, 60));
   });
 });
