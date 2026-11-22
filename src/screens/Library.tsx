@@ -353,6 +353,12 @@ export function WeekPlanSheet({ onClose }: { onClose: () => void }) {
       <p className="muted small">בשבוע הזה: {counts('lower')} אימוני פלג תחתון, {counts('upper')} פלג עליון, {counts('full')} גוף מלא. האימון הבא נבחר לפי הסדר הזה.</p>
 
       <label className="toggle">
+        <span>כל שבוע מתחיל מיום 1</span>
+        <input type="checkbox" checked={profile.weekly_reset !== false} onChange={(e) => { const { id: _id, ...rest } = profile; saveProfile({ ...rest, weekly_reset: e.target.checked }); }} />
+      </label>
+      <p className="muted small">כשפעיל, הספירה והסדר מתאפסים בכל יום ראשון. כשכבוי, הסדר ממשיך מאיפה שעצרת, גם אם שבוע הסתיים באמצע.</p>
+
+      <label className="toggle">
         <span>גיוון תרגילים בין סבבים</span>
         <input type="checkbox" checked={profile.variety !== false} onChange={(e) => { const { id: _id, ...rest } = profile; saveProfile({ ...rest, variety: e.target.checked }); }} />
       </label>

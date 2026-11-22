@@ -336,3 +336,7 @@ span.chip { display: inline-flex; align-items: center; }
 .fb-row.increase .fb-arrow { background: #1d3a29; color: var(--accent); }
 .fb-row.decrease .fb-arrow { background: rgba(251,191,36,.15); color: var(--warn); }
 .ov-row.done-cardio { cursor: default; }
+
+/* ───── v8: weekly history ───── */
+.week-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 6px; font-size: 1rem; }
+.week-head small { color: var(--muted); font-weight: 400; font-size: .82rem; }

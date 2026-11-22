@@ -35,9 +35,11 @@ export function ProfileForm({ submitLabel, onSaved }: { submitLabel: string; onS
       return;
     }
     const isNew = !profile;
+    // Keep every setting this form does not show (injury mode, weekly options, variety…).
+    const { id: _id, ...kept } = profile ?? { id: '' };
     saveProfile({
+      ...kept,
       schedule: program === 'custom' ? profile?.schedule : PRESETS[program],
-      variety: profile?.variety,
       height_cm: n(height), current_weight: n(weight), goal_weight: goalValue, age: n(age), sex, program,
       daily_calories_goal: n(calories) > 0 ? n(calories) : auto!.calories,
       daily_protein_goal: n(protein) > 0 ? n(protein) : auto!.protein,

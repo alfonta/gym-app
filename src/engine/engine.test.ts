@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { EXERCISES, EXERCISE_MAP } from '../data/exercises';
 import { EQUIPMENT } from '../data/equipment';
-import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf } from '../data/programs';
+import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf, weekPointer } from '../data/programs';
 import { applyVariety } from './variety';
-import { buildWorkout } from './builder';
+import { buildWorkout, suggestMore } from './builder';
 import { workoutFeedback, type FeedbackItem } from './feedback';
 import { estimateCalories } from '../components/CardioForm';
 import { applyInjuries, isBlocked, stress } from './injury';
@@ -562,5 +562,64 @@ describe('cardio calories estimate', () => {
     expect(estimateCalories('walk', 60, 70)).toBe(265);
     expect(estimateCalories('run', 30, 70)).toBeGreaterThan(estimateCalories('walk', 30, 70) * 2);
     expect(estimateCalories('bike', 30, 90)).toBeGreaterThan(estimateCalories('bike', 30, 60));
+  });
+});
+
+describe('more exercises in today\'s style', () => {
+  const cat = buildCatalog([]);
+  const today = (id: string) => TEMPLATES.find((t) => t.id === id)!.slots.map((sl) => ({ ex: EXERCISE_MAP[sl.exercise_id], sets: sl.sets }));
+  it('stays on today\'s muscles, skips what is already in the workout, no core when there is main work', () => {
+    const cur = today('push');
+    const out = suggestMore(cur, cat, allOn);
+    const muscles = new Set(cur.filter((c) => !c.ex.is_core).map((c) => c.ex.muscle_group));
+    expect(out.length).toBe(6);
+    for (const e of out) {
+      expect(muscles.has(e.muscle_group), e.id).toBe(true);
+      expect(cur.some((c) => c.ex.id === e.id)).toBe(false);
+      expect(e.is_core).toBe(false);
+    }
+    expect(new Set(out.map((e) => e.id)).size).toBe(out.length);
+  });
+  it('the muscle with the most sets comes first, and picks alternate between muscles', () => {
+    const out = suggestMore(today('push'), cat, allOn);
+    expect(out[0].muscle_group).toBe('chest');
+    expect(out[1].muscle_group).not.toBe('chest');
+  });
+  it('prefers movement patterns not yet covered today', () => {
+    const out = suggestMore(today('push'), cat, allOn);
+    const chest = out.filter((e) => e.muscle_group === 'chest');
+    // Push already has a flat press, an incline press and a fly.
+    expect(chest[0].pattern).not.toBe('h_push');
+  });
+  it('respects equipment and the allowed filter', () => {
+    const av = { ...allOn, cable: false, dumbbells: false };
+    for (const e of suggestMore(today('pull'), cat, av, (x) => x.pattern !== 'v_pull')) {
+      expect(isExerciseAvailable(e, av)).toBe(true);
+      expect(e.pattern).not.toBe('v_pull');
+    }
+  });
+  it('a core-only session gets more core', () => {
+    const out = suggestMore([{ ex: EXERCISE_MAP.plank, sets: 2 }], cat, allOn, undefined, 3);
+    expect(out).toHaveLength(3);
+    expect(out.every((e) => e.is_core)).toBe(true);
+  });
+});
+
+describe('weekly reset of the order', () => {
+  const ppl = PRESETS.ppl;
+  it('new week → day 1', () => {
+    expect(weekPointer(ppl, [])).toBe(0);
+  });
+  it('follows this week\'s workouts in order', () => {
+    expect(weekPointer(ppl, ['push'])).toBe(1);
+    expect(weekPointer(ppl, ['push', 'pull'])).toBe(2);
+    expect(weekPointer(ppl, ['push', 'pull', 'legs'])).toBe(0);
+  });
+  it('a skipped day is skipped; a bonus workout does not move it', () => {
+    expect(weekPointer(ppl, ['pull'])).toBe(2);
+    expect(weekPointer(ppl, ['full_a'])).toBe(0);
+  });
+  it('same workout twice in a week', () => {
+    expect(weekPointer(PRESETS.lower_focus, ['lower_a', 'upper_a'])).toBe(2);
   });
 });

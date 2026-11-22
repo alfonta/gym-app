@@ -10,6 +10,7 @@ import { historyFor, useCatalog, useStore, type WorkoutSummary } from '../store'
 import { videoLink } from '../engine/catalog';
 import { isBlocked } from '../engine/injury';
 import { ExercisePicker } from './Library';
+import { suggestMore } from '../engine/builder';
 import { CardioForm, cardioLine } from '../components/CardioForm';
 import type { Effort, Exercise } from '../types';
 import { Sheet } from '../components/Sheet';
@@ -179,6 +180,9 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
   const [inputHint, setInputHint] = useState(false);
   const [overview, setOverview] = useState(false);
   const [cardioOpen, setCardioOpen] = useState(false);
+  // Frozen when the sheet opens, so added exercises stay listed (marked) instead of vanishing.
+  const [more, setMore] = useState<Exercise[] | null>(null);
+  const [addedMore, setAddedMore] = useState<string[]>([]);
   const cardio = active.cardio ?? [];
   // Sets whose values were copied in and still await an explicit confirmation.
   const [pending, setPending] = useState<number[]>([]);
@@ -320,6 +324,16 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
     ? warmupSets(suggestion?.weight_kg ?? num(item.sets[0].weight) ?? 0, profile.bar_weight_kg)
     : [];
   const firstTime = !last && !item.sets.some((s) => s.done);
+  const todayItems = active.items.map((it) => ({ ex: cat.get(it.exercise_id), sets: it.sets.length }));
+  const todayMuscles = [...new Set((todayItems.some((t) => !t.ex.is_core) ? todayItems.filter((t) => !t.ex.is_core) : todayItems).map((t) => t.ex.muscle_group))];
+  const openMore = () => {
+    setAddedMore([]);
+    setMore(suggestMore(todayItems, cat, equipment, (e) => !isBlocked(e, profile.injuries)));
+  };
+  const addMore = (e: Exercise) => {
+    st().addActiveExercise(e.id, { beforeCore: true, focus: false });
+    setAddedMore((cur) => [...cur, e.id]);
+  };
   // Time still needed: work + rest for every set that is not ticked yet.
   const remainingMinutes = Math.ceil(active.items.reduce((sum, it) => {
     const e = cat.get(it.exercise_id);
@@ -469,6 +483,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
         )}
 
         <div className="set-tools">
+          <button className="btn ghost sm" onClick={() => openMore()}>+ עוד בסגנון של היום</button>
           <button className="btn ghost sm" onClick={() => setPicker('add')}>+ תרגיל לאימון הזה</button>
           <button className="btn ghost sm" onClick={() => setCardioOpen(true)}>+ אירובי{cardio.length > 0 ? ` (${cardio.length})` : ''}</button>
           <button className="btn ghost sm danger-text" disabled={active.items.length <= 1}
@@ -564,8 +579,33 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
               <button className="link danger-text" aria-label="הסר אירובי" onClick={() => st().removeActiveCardio(i)}>✕</button>
             </div>
           ))}
+          <button className="btn ghost block" onClick={() => { setOverview(false); openMore(); }}>+ עוד תרגילים בסגנון של היום</button>
           <button className="btn ghost block" onClick={() => { setOverview(false); setCardioOpen(true); }}>+ הוסף אירובי לאימון</button>
           <p className="muted small">לחיצה על תרגיל קופצת אליו. אפשר לבצע את התרגילים בכל סדר.</p>
+        </Sheet>
+      )}
+
+      {more && (
+        <Sheet title="עוד בסגנון של היום" onClose={() => setMore(null)}>
+          <p className="muted">תרגילים נוספים לשרירים שעבדת עליהם היום: {todayMuscles.map((m) => MUSCLE_LABEL[m]).join(', ')}.</p>
+          {more.length === 0 && <p className="muted">אין עוד תרגילים זמינים לשרירים האלה עם הציוד והמגבלות הנוכחיים.</p>}
+          {more.length >= 2 && addedMore.length === 0 && (
+            <button className="btn primary block" onClick={() => more.slice(0, 2).forEach(addMore)}>הוסף את 2 המומלצים</button>
+          )}
+          {more.map((e) => {
+            const added = addedMore.includes(e.id);
+            return (
+              <div key={e.id} className="list-row">
+                <span>
+                  <strong>{e.name}</strong>
+                  <small>{MUSCLE_LABEL[e.muscle_group]} · {e.is_core ? 'בטן' : e.is_compound ? 'מורכב' : 'בידוד'}{e.is_custom ? ' · תרגיל שלי' : ''}</small>
+                </span>
+                <button className={`btn sm ${added ? 'ghost' : ''}`} disabled={added} onClick={() => addMore(e)} aria-label={added ? `${e.name} נוסף` : `הוסף ${e.name}`}>{added ? 'נוסף ✓' : 'הוסף'}</button>
+              </div>
+            );
+          })}
+          <p className="muted small">התרגילים נכנסים לפני פינישר הבטן, ונשמרים רק באימון הזה. התוכנית הקבועה לא משתנה. כדאי להוסיף אחד או שניים, לא יותר.</p>
+          {addedMore.length > 0 && <button className="btn ghost block" onClick={() => setMore(null)}>סיום</button>}
         </Sheet>
       )}
 

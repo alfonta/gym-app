@@ -120,6 +120,29 @@ export function History() {
     [workouts, cardio],
   );
   const cardioWeek = cardio.filter((c) => weekStart(new Date(c.date)) === weekStart(new Date())).reduce((a, c) => a + c.minutes, 0);
+  const thisWeekKey = weekStart(new Date());
+  const workoutsThisWeek = workouts.filter((w) => weekStart(new Date(w.date)) === thisWeekKey).length;
+  // Feed split into Sunday-to-Saturday weeks, newest first.
+  const weeks = useMemo(() => {
+    const out: { key: string; items: typeof feed }[] = [];
+    for (const item of feed) {
+      const key = weekStart(new Date(item.date));
+      const last = out[out.length - 1];
+      if (last && last.key === key) last.items.push(item);
+      else out.push({ key, items: [item] });
+    }
+    return out;
+  }, [feed]);
+  const weekLabel = (key: string) => {
+    const [y, m, d] = key.split('-').map(Number);
+    const end = new Date(y, m - 1, d + 6);
+    return key === thisWeekKey ? 'השבוע' : `${d}.${m}–${end.getDate()}.${end.getMonth() + 1}`;
+  };
+  const weekStats = (key: string) => {
+    const n = workouts.filter((w) => weekStart(new Date(w.date)) === key).length;
+    const mins = cardio.filter((c) => weekStart(new Date(c.date)) === key).reduce((a, c) => a + c.minutes, 0);
+    return `${n} ${n === 1 ? 'אימון' : 'אימונים'}${mins ? ` · אירובי ${mins} דק׳` : ''}`;
+  };
   const setsOf = (id: string) => sets.filter((x) => x.workout_id === id).sort((a, b) => a.order_index - b.order_index);
 
   const grouped = (workoutId: string) => {
@@ -144,12 +167,14 @@ export function History() {
     <>
       <header className="page-head">
         <h1>היסטוריה</h1>
-        <span className="muted">{workouts.length} אימונים{cardio.length > 0 ? ` · אירובי השבוע: ${cardioWeek} דקות` : ''}</span>
+        <span className="muted">השבוע: {workoutsThisWeek} · סה"כ {workouts.length} אימונים{cardio.length > 0 ? ` · אירובי השבוע: ${cardioWeek} דקות` : ''}</span>
       </header>
       <button className="btn ghost block" onClick={() => setCardioOpen(true)}>+ הוסף אימון אירובי</button>
       {msg && <p className="muted center" role="status">{msg}</p>}
       {feed.length === 0 && <p className="muted center">עדיין אין אימונים שמורים.</p>}
-      {feed.map((item) => item.kind === 'cardio' ? (
+      {weeks.map((wk) => [
+        <h2 key={`h-${wk.key}`} className="week-head"><span dir={wk.key === thisWeekKey ? undefined : 'ltr'}>{weekLabel(wk.key)}</span><small>{weekStats(wk.key)}</small></h2>,
+        ...wk.items.map((item) => item.kind === 'cardio' ? (
         <section key={item.c.id} className="card cardio-card">
           <div className="list-row">
             <span>
@@ -193,7 +218,7 @@ export function History() {
             </div>
           )}
         </section>
-      ))}
+      ))])}
       {editingWorkout && <WorkoutEditor workout={editingWorkout} sets={setsOf(editingWorkout.id)} onClose={() => setEditing(null)} />}
       {cardioOpen && <CardioSheet onClose={() => setCardioOpen(false)} />}
     </>

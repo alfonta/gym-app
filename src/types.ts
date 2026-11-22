@@ -123,6 +123,8 @@ export interface UserProfile {
   schedule?: SplitType[];
   /** Alternate some accessory exercises between rounds of the same workout. Default on. */
   variety?: boolean;
+  /** Start the weekly order again from day 1 every week (Sunday). Default on. */
+  weekly_reset?: boolean;
   /** Injury mode: body area → how careful to be. */
   injuries?: Partial<Record<'shoulder' | 'elbow' | 'wrist' | 'lower_back' | 'knee' | 'hip' | 'ankle', 'reduce' | 'avoid'>>;
   bar_weight_kg: number;

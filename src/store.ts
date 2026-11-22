@@ -74,7 +74,7 @@ interface Actions {
   removeSet: (item: number) => void;
   swapExercise: (item: number, exerciseId: string, remember: boolean) => void;
   /** This workout only – the program is not changed. */
-  addActiveExercise: (exerciseId: string) => void;
+  addActiveExercise: (exerciseId: string, opts?: { beforeCore?: boolean; focus?: boolean }) => void;
   removeActiveItem: (item: number) => void;
   setEffort: (item: number, effort: Effort) => void;
   addActiveCardio: (c: Omit<CardioEntry, 'id' | 'date' | 'workout_id'>) => void;
@@ -316,16 +316,24 @@ export const useStore = create<Store>()(
             };
           }),
 
-        addActiveExercise: (exerciseId) =>
+        addActiveExercise: (exerciseId, opts = {}) =>
           set((s) => {
             if (!s.active) return {};
-            const slot = defaultSlot(cat().get(exerciseId));
+            const ex = cat().get(exerciseId);
+            const base = defaultSlot(ex);
+            // Isolation work late in a session: lighter, higher reps.
+            const slot = !ex.is_core && !ex.is_compound && ex.tracking === 'weight_reps' ? { ...base, rep_min: 10, rep_max: 15 } : base;
             const item: ActiveItem = {
               planned_exercise_id: exerciseId, exercise_id: exerciseId, role: slot.role,
               rep_min: slot.rep_min, rep_max: slot.rep_max, sets: Array.from({ length: slot.sets }, emptySet), effort: null,
             };
-            const items = [...s.active.items, item];
-            return { active: { ...s.active, items, current_index: items.length - 1 } };
+            const firstCore = s.active.items.findIndex((i) => i.role === 'core');
+            const at = opts.beforeCore && !ex.is_core && firstCore >= 0 ? firstCore : s.active.items.length;
+            const items = [...s.active.items.slice(0, at), item, ...s.active.items.slice(at)];
+            const cur = s.active.current_index;
+            const focus = opts.focus ?? true;
+            // Without focus, stay on the same exercise even though indices shifted.
+            return { active: { ...s.active, items, current_index: focus ? at : cur >= at ? cur + 1 : cur } };
           }),
 
         removeActiveItem: (item) =>

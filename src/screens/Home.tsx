@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
-import { PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, initialRotation, scheduleOf } from '../data/programs';
+import { PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, initialRotation, scheduleOf, weekPointer } from '../data/programs';
 import { estimateMinutes, formatClock, weekStart, ymd } from '../engine/calc';
 import { primeAudio, useNow } from '../hooks';
 import { backupAgeDays, planSplit, useStore } from '../store';
@@ -35,9 +35,13 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
 
   const last = useMemo(() => [...workouts].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null, [workouts]);
   const schedule = scheduleOf(profile);
-  const pointer = rotationIndex ?? initialRotation(schedule, last?.split_type ?? null);
+  const weekWorkouts = workouts.filter((w) => weekStart(new Date(w.date)) === weekStart(new Date())).sort((a, b) => a.date.localeCompare(b.date));
+  const thisWeek = weekWorkouts.length;
+  // Default: every week starts again from day 1. Otherwise the order carries on across weeks.
+  const pointer = profile.weekly_reset !== false
+    ? weekPointer(schedule, weekWorkouts.map((w) => w.split_type))
+    : rotationIndex ?? initialRotation(schedule, last?.split_type ?? null);
   const next = TEMPLATE_MAP[schedule[pointer % schedule.length]];
-  const thisWeek = workouts.filter((w) => weekStart(new Date(w.date)) === weekStart(new Date())).length;
 
   const start = (id: SplitType) => {
     primeAudio();
@@ -100,7 +104,11 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
         </section>
       ) : (
         <section className="card highlight">
-          <div className="tag">הבא בתור · יום {(pointer % schedule.length) + 1} מתוך {schedule.length}</div>
+          <div className="tag">
+            {thisWeek < schedule.length
+              ? `הבא בתור · אימון ${thisWeek + 1} מתוך ${schedule.length} השבוע`
+              : `השלמת את ${schedule.length} האימונים של השבוע 💪 · אימון נוסף`}
+          </div>
           <h2>{next.name}</h2>
           <p className="muted">{next.subtitle} · כ-{plan(next.id).minutes} דקות</p>
           <PlanList id={next.id} />

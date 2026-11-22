@@ -172,6 +172,14 @@ export function initialRotation(schedule: SplitType[], lastSplit: SplitType | nu
 }
 
 /**
+ * Rotation position when every week starts again from day 1: replay this
+ * week's workouts (oldest first) from the start of the schedule.
+ */
+export function weekPointer(schedule: SplitType[], thisWeekSplits: SplitType[]): number {
+  return thisWeekSplits.reduce((i, s) => advanceRotation(schedule, i, s), 0);
+}
+
+/**
  * Moves the rotation pointer after a finished workout. Works when the same
  * workout appears more than once in the week, and ignores off-schedule bonus days.
  */
