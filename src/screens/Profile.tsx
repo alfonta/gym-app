@@ -317,6 +317,9 @@ export function Profile() {
       </section>
 
       <BackupSection />
+      <p className="muted small center" data-build={__BUILD_TIME__}>
+        גרסה {new Date(__BUILD_TIME__).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+      </p>
 
       {sheet === 'measure' && <MeasurementSheet onClose={() => setSheet(null)} />}
       {sheet === 'equipment' && <MyGymSheet onClose={() => setSheet(null)} />}

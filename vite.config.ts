@@ -5,10 +5,13 @@ import { VitePWA } from 'vite-plugin-pwa';
 // Served from https://<user>.github.io/gym-app/
 export default defineConfig({
   base: '/gym-app/',
+  // Shown in the profile so it is easy to tell which version is running.
+  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt': a new version waits until we apply it, so it can never reload mid-workout.
+      registerType: 'prompt',
       includeAssets: ['apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       workbox: {
         // Precache the exercise images too, so the gym's bad reception does not matter.

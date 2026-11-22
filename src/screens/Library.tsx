@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
 import { MUSCLE_LABEL } from '../data/exercises';
-import { CUSTOM_TEMPLATE, PRESETS, PROGRAM_HINT, PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, scheduleOf } from '../data/programs';
+import { CUSTOM_TEMPLATE, PRESETS, PROGRAM_HINT, PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, scheduleOf, weekStartMode, type WeekStartMode } from '../data/programs';
+
+const WEEK_START: { id: WeekStartMode; label: string }[] = [
+  { id: 'ask', label: 'לשאול אותי' },
+  { id: 'new', label: 'תמיד שבוע חדש' },
+  { id: 'continue', label: 'תמיד להמשיך' },
+];
 import { buildWorkout } from '../engine/builder';
 import { estimateMinutes } from '../engine/calc';
 import { INJURY_LABEL, activeInjuries, isBlocked, type InjuryArea, type InjuryLevel } from '../engine/injury';
@@ -352,11 +358,15 @@ export function WeekPlanSheet({ onClose }: { onClose: () => void }) {
       </div>
       <p className="muted small">בשבוע הזה: {counts('lower')} אימוני פלג תחתון, {counts('upper')} פלג עליון, {counts('full')} גוף מלא. האימון הבא נבחר לפי הסדר הזה.</p>
 
-      <label className="toggle">
-        <span>כל שבוע מתחיל מיום 1</span>
-        <input type="checkbox" checked={profile.weekly_reset !== false} onChange={(e) => { const { id: _id, ...rest } = profile; saveProfile({ ...rest, weekly_reset: e.target.checked }); }} />
-      </label>
-      <p className="muted small">כשפעיל, הספירה והסדר מתאפסים בכל יום ראשון. כשכבוי, הסדר ממשיך מאיפה שעצרת, גם אם שבוע הסתיים באמצע.</p>
+      <div className="field"><span>כשמתחיל שבוע חדש ולא סיימת את הקודם</span>
+        <div className="chips">
+          {WEEK_START.map((o) => (
+            <button key={o.id} className={`chip ${weekStartMode(profile) === o.id ? 'on' : ''}`}
+              onClick={() => { const { id: _id, ...rest } = profile; saveProfile({ ...rest, week_start: o.id, weekly_reset: undefined }); }}>{o.label}</button>
+          ))}
+        </div>
+        <p className="muted small">"לשאול אותי": בתחילת כל שבוע כזה, מסך הבית שואל אם להתחיל מיום 1 או להמשיך מהאימון שלא הספקת. הספירה "אימון X מתוך N השבוע" מתאפסת בכל יום ראשון בכל מקרה.</p>
+      </div>
 
       <label className="toggle">
         <span>גיוון תרגילים בין סבבים</span>

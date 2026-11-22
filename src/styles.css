@@ -340,3 +340,8 @@ span.chip { display: inline-flex; align-items: center; }
 /* ───── v8: weekly history ───── */
 .week-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 6px; font-size: 1rem; }
 .week-head small { color: var(--muted); font-weight: 400; font-size: .82rem; }
+
+/* ───── v9: week choice + update banner ───── */
+.week-choice .btn.big { font-size: 1.02rem; }
+.small-link { color: var(--blue); font-size: .85rem; padding: 0; text-align: start; }
+.update-card { display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-color: var(--blue); }

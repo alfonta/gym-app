@@ -1,15 +1,18 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { registerSW } from 'virtual:pwa-register';
 import App from './App';
+import { AppErrorBoundary } from './components/ErrorBoundary';
+import { setupUpdates } from './update';
 import './styles.css';
 
-registerSW({ immediate: true });
+setupUpdates();
 // Ask the browser not to evict local data under storage pressure.
 void navigator.storage?.persist?.();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>,
 );

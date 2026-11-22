@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
-import { PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, initialRotation, scheduleOf, weekPointer } from '../data/programs';
+import { PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, initialRotation, scheduleOf, weekPointer, weekStartMode } from '../data/programs';
+import { applyUpdate, useUpdate } from '../update';
 import { estimateMinutes, formatClock, weekStart, ymd } from '../engine/calc';
 import { primeAudio, useNow } from '../hooks';
 import { backupAgeDays, planSplit, useStore } from '../store';
@@ -26,6 +27,9 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
   const snoozeBackup = useStore((s) => s.snoozeBackup);
   const customExercises = useStore((s) => s.custom_exercises);
   const rotationIndex = useStore((s) => s.rotation_index);
+  const weekChoice = useStore((s) => s.week_choice);
+  const setWeekChoice = useStore((s) => s.setWeekChoice);
+  const updateReady = useUpdate((s) => s.ready);
   const [weightInput, setWeightInput] = useState('');
   const now = useNow(1000);
   const [showAll, setShowAll] = useState(false);
@@ -35,12 +39,22 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
 
   const last = useMemo(() => [...workouts].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null, [workouts]);
   const schedule = scheduleOf(profile);
-  const weekWorkouts = workouts.filter((w) => weekStart(new Date(w.date)) === weekStart(new Date())).sort((a, b) => a.date.localeCompare(b.date));
+  const weekKey = weekStart(new Date());
+  const weekWorkouts = workouts.filter((w) => weekStart(new Date(w.date)) === weekKey).sort((a, b) => a.date.localeCompare(b.date));
   const thisWeek = weekWorkouts.length;
-  // Default: every week starts again from day 1. Otherwise the order carries on across weeks.
-  const pointer = profile.weekly_reset !== false
-    ? weekPointer(schedule, weekWorkouts.map((w) => w.split_type))
-    : rotationIndex ?? initialRotation(schedule, last?.split_type ?? null);
+  // Where last week stopped: the workout after the last one done before this week.
+  const lastBeforeWeek = [...workouts].filter((w) => weekStart(new Date(w.date)) < weekKey).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const lastWeekCount = lastBeforeWeek ? workouts.filter((w) => weekStart(new Date(w.date)) === weekStart(new Date(lastBeforeWeek.date))).length : 0;
+  const continueAt = lastBeforeWeek ? initialRotation(schedule, lastBeforeWeek.split_type) : 0;
+  const pref = weekStartMode(profile);
+  const chosen = weekChoice?.week === weekKey ? weekChoice.mode : null;
+  // Ask only when it matters: last week stopped mid-way and nothing was done yet this week.
+  const askWeek = pref === 'ask' && !chosen && continueAt !== 0 && thisWeek === 0;
+  const mode = pref === 'ask' ? chosen ?? 'new' : pref;
+  const pointer = mode === 'continue'
+    ? weekPointer(schedule, weekWorkouts.map((w) => w.split_type), continueAt)
+    : weekPointer(schedule, weekWorkouts.map((w) => w.split_type));
+  void rotationIndex;
   const next = TEMPLATE_MAP[schedule[pointer % schedule.length]];
 
   const start = (id: SplitType) => {
@@ -95,7 +109,28 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
         <span className="muted">{PROGRAM_LABEL[profile.program]} · השבוע: {thisWeek} מתוך {schedule.length} אימונים</span>
       </header>
 
-      {active ? (
+      {updateReady && !active && (
+        <section className="card update-card" role="status">
+          <span>גרסה חדשה של האפליקציה מוכנה.</span>
+          <button className="btn primary sm" onClick={() => void applyUpdate()}>עדכן עכשיו</button>
+        </section>
+      )}
+      {updateReady && active && <p className="muted small center">גרסה חדשה מוכנה. היא תותקן אחרי שתסיים את האימון, כדי לא לפגוע בו.</p>}
+
+      {!active && askWeek ? (
+        <section className="card highlight week-choice">
+          <div className="tag">שבוע חדש התחיל</div>
+          <h2>מאיפה ממשיכים?</h2>
+          <p className="muted">בשבוע שעבר עשית {lastWeekCount} מתוך {schedule.length} אימונים, והאחרון היה {TEMPLATE_MAP[lastBeforeWeek!.split_type].name}.</p>
+          <button className="btn primary block big" onClick={() => setWeekChoice(weekKey, 'new')}>
+            להתחיל שבוע חדש · {TEMPLATE_MAP[schedule[0]].name}
+          </button>
+          <button className="btn ghost block big" onClick={() => setWeekChoice(weekKey, 'continue')}>
+            להמשיך מאיפה שעצרתי · {TEMPLATE_MAP[schedule[continueAt]].name}
+          </button>
+          <p className="muted small">אפשר לקבוע תשובה קבועה בפרופיל, תחת "מבנה השבוע".</p>
+        </section>
+      ) : active ? (
         <section className="card highlight">
           <div className="tag">אימון פעיל</div>
           <h2>{TEMPLATE_MAP[active.split_type].name}</h2>
@@ -104,6 +139,11 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
         </section>
       ) : (
         <section className="card highlight">
+          {pref === 'ask' && chosen && thisWeek === 0 && continueAt !== 0 && (
+            <button className="link small-link" onClick={() => setWeekChoice(weekKey, chosen === 'new' ? 'continue' : 'new')}>
+              {chosen === 'new' ? `במקום זה להמשיך מאיפה שעצרתי (${TEMPLATE_MAP[schedule[continueAt]].name})` : `במקום זה להתחיל שבוע חדש (${TEMPLATE_MAP[schedule[0]].name})`}
+            </button>
+          )}
           <div className="tag">
             {thisWeek < schedule.length
               ? `הבא בתור · אימון ${thisWeek + 1} מתוך ${schedule.length} השבוע`

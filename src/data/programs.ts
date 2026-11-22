@@ -175,8 +175,13 @@ export function initialRotation(schedule: SplitType[], lastSplit: SplitType | nu
  * Rotation position when every week starts again from day 1: replay this
  * week's workouts (oldest first) from the start of the schedule.
  */
-export function weekPointer(schedule: SplitType[], thisWeekSplits: SplitType[]): number {
-  return thisWeekSplits.reduce((i, s) => advanceRotation(schedule, i, s), 0);
+export function weekPointer(schedule: SplitType[], thisWeekSplits: SplitType[], start = 0): number {
+  return thisWeekSplits.reduce((i, s) => advanceRotation(schedule, i, s), start);
+}
+
+export type WeekStartMode = 'ask' | 'new' | 'continue';
+export function weekStartMode(p: Pick<UserProfile, 'week_start' | 'weekly_reset'>): WeekStartMode {
+  return p.week_start ?? (p.weekly_reset === false ? 'continue' : 'ask');
 }
 
 /**

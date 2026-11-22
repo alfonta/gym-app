@@ -19,11 +19,80 @@ import type { PastSession } from './engine/progression';
 const USER_ID = 'local';
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
+// Writes still in flight, so an update can wait for them before reloading the page.
+const pendingWrites = new Set<Promise<unknown>>();
+const track = <T>(p: Promise<T>): Promise<T> => {
+  pendingWrites.add(p);
+  void p.finally(() => pendingWrites.delete(p));
+  return p;
+};
+export async function flushPersist(): Promise<void> {
+  await Promise.allSettled([...pendingWrites]);
+}
+
 const idbStorage: StateStorage = {
   getItem: async (name) => (await idbGet<string>(name)) ?? null,
-  setItem: (name, value) => idbSet(name, value),
-  removeItem: (name) => del(name),
+  setItem: (name, value) => track(idbSet(name, value)),
+  removeItem: (name) => track(del(name)),
 };
+
+// ───── Safety net for the workout in progress ─────
+// The main store is written to IndexedDB asynchronously. The active workout is
+// also mirrored to localStorage, which is written synchronously on every change,
+// so a reload (an app update, iOS killing the app) never loses the last tap.
+const ACTIVE_BACKUP_KEY = 'gym-app-active-backup';
+const UNREADABLE_KEY = 'gym-app-active-unreadable';
+
+function isValidActive(a: unknown): a is ActiveWorkout {
+  const x = a as ActiveWorkout | null;
+  return !!x && typeof x.id === 'string' && typeof x.started_at === 'number' && Array.isArray(x.items) && x.items.length > 0
+    && x.items.every((i) => i && typeof i.exercise_id === 'string' && Array.isArray(i.sets));
+}
+
+/** undefined = no backup; null = backup says no workout in progress. */
+function readActiveBackup(): ActiveWorkout | null | undefined {
+  try {
+    const raw = localStorage.getItem(ACTIVE_BACKUP_KEY);
+    if (!raw) return undefined;
+    const a = JSON.parse(raw).active ?? null;
+    return a === null || isValidActive(a) ? a : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeActiveBackup(active: ActiveWorkout | null): void {
+  try {
+    localStorage.setItem(ACTIVE_BACKUP_KEY, JSON.stringify({ saved_at: Date.now(), active }));
+  } catch {
+    // Storage full or blocked: drop the backup rather than leave an older copy
+    // that could win over IndexedDB on the next load.
+    try { localStorage.removeItem(ACTIVE_BACKUP_KEY); } catch { /* ignore */ }
+  }
+}
+
+/** Picks the freshest copy of the workout in progress and repairs what an older version may have left behind. */
+export function recoverActive(fromDb: unknown, backup: ActiveWorkout | null | undefined, savedIds: Set<string>): ActiveWorkout | null {
+  let active: ActiveWorkout | null = null;
+  if (fromDb != null) {
+    if (isValidActive(fromDb)) active = fromDb;
+    else {
+      // Unreadable by this version: keep a copy instead of throwing it away.
+      try { localStorage.setItem(UNREADABLE_KEY, JSON.stringify(fromDb)); } catch { /* ignore */ }
+    }
+  }
+  // The backup is written synchronously on every change, so it is never older
+  // than the database copy (a failed write removes it instead of leaving it stale).
+  if (backup) active = backup;
+  // Already saved as a finished workout (the reload happened after "finish").
+  if (active && savedIds.has(active.id)) return null;
+  if (!active) return null;
+  return {
+    ...active,
+    current_index: Math.min(Math.max(0, active.current_index ?? 0), active.items.length - 1),
+    rest: active.rest && typeof active.rest.ends_at === 'number' ? active.rest : null,
+  };
+}
 
 export interface WorkoutSummary {
   workout: Workout;
@@ -50,6 +119,8 @@ interface Data {
   cardio: CardioEntry[];
   last_backup_at: string | null;
   backup_snooze_until: string | null;
+  /** The choice made at the start of a week: start over or continue last week's order. */
+  week_choice: { week: string; mode: 'new' | 'continue' } | null;
   /** Machines the user added to their gym, beyond the built-in list. */
   custom_equipment: EquipmentDef[];
   /** Position in the weekly rotation. Null = derive from the last workout. */
@@ -96,6 +167,7 @@ interface Actions {
   addCardio: (c: Omit<CardioEntry, 'id'>) => void;
   deleteCardio: (id: string) => void;
   markBackup: () => void;
+  setWeekChoice: (week: string, mode: 'new' | 'continue') => void;
   snoozeBackup: (days: number) => void;
   replaceAll: (data: Partial<Data>) => void;
 }
@@ -118,6 +190,7 @@ const initial: Data = {
   cardio: [],
   last_backup_at: null,
   backup_snooze_until: null,
+  week_choice: null,
   custom_equipment: [],
   rotation_index: null,
 };
@@ -441,6 +514,8 @@ export const useStore = create<Store>()(
         addCardio: (c) => set((s) => ({ cardio: [...s.cardio, { ...c, id: uid() }] })),
         deleteCardio: (id) => set((s) => ({ cardio: s.cardio.filter((c) => c.id !== id) })),
 
+        setWeekChoice: (week, mode) => set({ week_choice: { week, mode } }),
+
         markBackup: () => set({ last_backup_at: new Date().toISOString(), backup_snooze_until: null }),
         snoozeBackup: (days) => set({ backup_snooze_until: new Date(Date.now() + days * 86400000).toISOString() }),
 
@@ -453,11 +528,18 @@ export const useStore = create<Store>()(
       storage: createJSONStorage(() => idbStorage),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<Data>;
-        return { ...current, ...p, equipment: { ...defaultEquipment(), ...(p.equipment ?? {}) } };
+        const active = recoverActive(p.active, readActiveBackup(), new Set((p.workouts ?? []).map((w) => w.id)));
+        return { ...current, ...p, active, equipment: { ...defaultEquipment(), ...(p.equipment ?? {}) } };
       },
     },
   ),
 );
+
+// Mirror every change of the workout in progress (only after loading, so the
+// initial empty state never overwrites a backup).
+useStore.subscribe((s, prev) => {
+  if (useStore.persist.hasHydrated() && s.active !== prev.active) writeActiveBackup(s.active);
+});
 
 // ───── Selectors ─────
 
@@ -562,7 +644,7 @@ export async function exportBackup(): Promise<string> {
     bodyweight: s.bodyweight, measurements: s.measurements, active: null, swap_prefs: s.swap_prefs,
     custom_exercises: s.custom_exercises, template_overrides: s.template_overrides, cardio: s.cardio,
     last_backup_at: s.last_backup_at, backup_snooze_until: null,
-    custom_equipment: s.custom_equipment, rotation_index: s.rotation_index,
+    custom_equipment: s.custom_equipment, rotation_index: s.rotation_index, week_choice: s.week_choice,
   };
   return JSON.stringify({ app: 'gym-app', version: 3, exported_at: new Date().toISOString(), data, photos });
 }

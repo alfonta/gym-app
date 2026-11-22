@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EXERCISES, EXERCISE_MAP } from '../data/exercises';
 import { EQUIPMENT } from '../data/equipment';
-import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf, weekPointer } from '../data/programs';
+import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf, weekPointer, weekStartMode } from '../data/programs';
+import { recoverActive } from '../store';
 import { applyVariety } from './variety';
 import { buildWorkout, suggestMore } from './builder';
 import { workoutFeedback, type FeedbackItem } from './feedback';
@@ -621,5 +622,44 @@ describe('weekly reset of the order', () => {
   });
   it('same workout twice in a week', () => {
     expect(weekPointer(PRESETS.lower_focus, ['lower_a', 'upper_a'])).toBe(2);
+  });
+});
+
+describe('continue last week', () => {
+  it('starts from where last week stopped and follows this week', () => {
+    expect(weekPointer(PRESETS.ppl, [], 2)).toBe(2);
+    expect(weekPointer(PRESETS.ppl, ['legs'], 2)).toBe(0);
+    expect(weekPointer(PRESETS.ppl, ['legs', 'push'], 2)).toBe(1);
+  });
+  it('setting: default ask, old switch migrates', () => {
+    expect(weekStartMode({})).toBe('ask');
+    expect(weekStartMode({ weekly_reset: false })).toBe('continue');
+    expect(weekStartMode({ weekly_reset: true })).toBe('ask');
+    expect(weekStartMode({ week_start: 'new', weekly_reset: false })).toBe('new');
+  });
+});
+
+describe('recovering the workout in progress after a reload', () => {
+  const item = { planned_exercise_id: 'squat', exercise_id: 'squat', role: 'anchor', rep_min: 6, rep_max: 10, effort: null,
+    sets: [{ weight: '60', reps: '8', done: true, completed_at: 'x', is_pr: false }] };
+  const A = (id: string, done = 1) => ({ id, split_type: 'legs', started_at: 1, current_index: 0, rest: null,
+    items: [{ ...item, sets: Array.from({ length: done }, () => item.sets[0]) }] }) as never;
+  const none = new Set<string>();
+  it('no data → nothing', () => expect(recoverActive(undefined, undefined, none)).toBeNull());
+  it('database only', () => expect(recoverActive(A('w'), undefined, none)).toEqual(A('w')));
+  it('the backup wins for the same workout (database write lost on reload)', () => {
+    expect((recoverActive(A('w', 1), A('w', 3), none) as { items: { sets: unknown[] }[] }).items[0].sets).toHaveLength(3);
+  });
+  it('backup alone restores a workout the database never got', () => expect(recoverActive(null, A('w'), none)).toEqual(A('w')));
+  it('a different newer workout in the backup wins', () => expect((recoverActive(A('old'), A('new'), none) as { id: string }).id).toBe('new'));
+  it('backup "nothing in progress" does not discard an unsaved workout', () => expect(recoverActive(A('w'), null, none)).toEqual(A('w')));
+  it('already saved as finished → not resurrected', () => expect(recoverActive(A('w'), A('w'), new Set(['w']))).toBeNull());
+  it('repairs an out-of-range position and a broken rest timer', () => {
+    const r = recoverActive({ ...(A('w') as object), current_index: 7, rest: { bogus: 1 } }, undefined, none) as { current_index: number; rest: unknown };
+    expect(r.current_index).toBe(0);
+    expect(r.rest).toBeNull();
+  });
+  it('an unreadable workout from another version is set aside, not crashed on', () => {
+    expect(recoverActive({ id: 'w', items: 'nope' }, undefined, none)).toBeNull();
   });
 });
