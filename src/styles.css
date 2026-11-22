@@ -345,3 +345,15 @@ span.chip { display: inline-flex; align-items: center; }
 .week-choice .btn.big { font-size: 1.02rem; }
 .small-link { color: var(--blue); font-size: .85rem; padding: 0; text-align: start; }
 .update-card { display: flex; flex-direction: row; justify-content: space-between; align-items: center; border-color: var(--blue); }
+
+/* ───── v10: alerts ───── */
+.rest-flash {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-content: center; gap: 8px; text-align: center;
+  background: rgba(22, 101, 52, .92); color: #fff; animation: flash-in .25s ease-out;
+}
+.rest-flash strong { font-size: 2.2rem; }
+.rest-flash span { font-size: 1.1rem; opacity: .9; }
+@keyframes flash-in { from { opacity: 0; } }
+.note-box { background: var(--card2); border-radius: 12px; padding: 12px; display: grid; gap: 6px; font-size: .9rem; }
+.note-box ul { margin: 0; padding-inline-start: 18px; display: grid; gap: 4px; }
+.sheet-body h3 { font-size: 1rem; margin-top: 6px; }

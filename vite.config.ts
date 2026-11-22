@@ -14,6 +14,8 @@ export default defineConfig({
       registerType: 'prompt',
       includeAssets: ['apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       workbox: {
+        // Handles taps on notifications.
+        importScripts: ['sw-notify.js'],
         // Precache the exercise images too, so the gym's bad reception does not matter.
         globPatterns: ['**/*.{js,css,html,png,jpg,svg,webmanifest}'],
         maximumFileSizeToCacheInBytes: 3_000_000,

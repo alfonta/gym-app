@@ -204,4 +204,6 @@ export interface ActiveWorkout {
   rest: RestState | null;
   /** Cardio done as part of this workout; saved together with it. */
   cardio?: Omit<CardioEntry, 'id' | 'date' | 'workout_id'>[];
+  /** "Still training" answer to the left-open check: do not ask again before this time. */
+  overdue_snooze_until?: number;
 }

@@ -10,6 +10,7 @@ import { History } from './screens/History';
 import { Profile } from './screens/Profile';
 import { ProfileForm } from './screens/ProfileForm';
 import { Sheet } from './components/Sheet';
+import { WorkoutAlerts } from './components/WorkoutAlerts';
 import { cardioLine } from './components/CardioForm';
 
 type Tab = 'home' | 'history' | 'profile';
@@ -49,15 +50,19 @@ export default function App() {
 
   if (active && inWorkout) {
     return (
+      <>
+      <WorkoutAlerts />
       <ActiveWorkoutScreen
         onMinimize={() => setInWorkout(false)}
         onFinished={(s) => { setSummary(s); setTab('home'); }}
       />
+      </>
     );
   }
 
   return (
     <div className="shell">
+      {active && <WorkoutAlerts />}
       <div className="page">
         {tab === 'home' && <Home onOpenWorkout={() => setInWorkout(true)} />}
         {tab === 'history' && <History />}

@@ -136,7 +136,9 @@ interface Actions {
   /** One-off workout from an explicit exercise list (the custom-workout builder). */
   startCustomWorkout: (slots: TemplateSlot[]) => void;
   cancelWorkout: () => void;
-  finishWorkout: () => WorkoutSummary | null;
+  /** endAt: when the workout really ended (e.g. it was left open by mistake). */
+  finishWorkout: (endAt?: number) => WorkoutSummary | null;
+  snoozeOverdue: (minutes: number) => void;
   setCurrentIndex: (i: number) => void;
   editSet: (item: number, set: number, patch: { weight?: string; reps?: string }) => void;
   completeSet: (item: number, set: number, weight: number, reps: number) => boolean;
@@ -259,7 +261,7 @@ export const useStore = create<Store>()(
 
         cancelWorkout: () => set({ active: null }),
 
-        finishWorkout: () => {
+        finishWorkout: (endAt) => {
           const { active } = get();
           if (!active) return null;
           const c = cat();
@@ -269,7 +271,7 @@ export const useStore = create<Store>()(
             user_id: USER_ID,
             date: new Date(active.started_at).toISOString(),
             split_type: active.split_type,
-            total_duration_minutes: Math.max(1, Math.round((now.getTime() - active.started_at) / 60000)),
+            total_duration_minutes: Math.max(1, Math.round(((endAt ?? now.getTime()) - active.started_at) / 60000)),
             efforts: {},
             wearable_sync_id: null,
             avg_heart_rate: null,
@@ -328,6 +330,8 @@ export const useStore = create<Store>()(
           });
           return { workout, sets: logs.length, volume: Math.round(volume), prs, feedback, cardio };
         },
+
+        snoozeOverdue: (minutes) => set((s) => (s.active ? { active: { ...s.active, overdue_snooze_until: Date.now() + minutes * 60000 } } : {})),
 
         setCurrentIndex: (i) => set((s) => (s.active ? { active: { ...s.active, current_index: Math.max(0, Math.min(s.active.items.length - 1, i)) } } : {})),
 

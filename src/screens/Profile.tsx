@@ -7,6 +7,7 @@ import { usePhoto } from '../hooks';
 import { backupAgeDays, exportBackup, importBackup, savePhoto, useCatalog, useStore } from '../store';
 import { CustomExercisesSheet, InjurySheet, MyGymSheet, ProgramEditorSheet, WeekPlanSheet } from './Library';
 import { activeInjuries } from '../engine/injury';
+import { AlertsSheet } from '../components/AlertsSheet';
 import type { BodyMeasurement } from '../types';
 import { ProfileForm } from './ProfileForm';
 
@@ -174,7 +175,7 @@ export function Profile() {
 
   const [weightInput, setWeightInput] = useState('');
   const cat = useCatalog();
-  const [sheet, setSheet] = useState<'measure' | 'equipment' | 'edit' | 'custom' | 'program' | 'week' | 'injury' | null>(null);
+  const [sheet, setSheet] = useState<'measure' | 'equipment' | 'edit' | 'custom' | 'program' | 'week' | 'injury' | 'alerts' | null>(null);
   const [progressId, setProgressId] = useState('');
 
   const trend = useMemo(() => weightTrend(bodyweight).slice(-60), [bodyweight]);
@@ -309,6 +310,7 @@ export function Profile() {
         </div>
         <p className="muted small">הערכה כללית לפי גובה, משקל וגיל. זה לא ייעוץ תזונתי או רפואי אישי.</p>
         <button className="row-btn" onClick={() => setSheet('week')}><span>מבנה השבוע (ימים, דגשים וגיוון)</span><span>←</span></button>
+        <button className="row-btn" onClick={() => setSheet('alerts')}><span>התראות וצלילים</span><span>←</span></button>
         <button className="row-btn" onClick={() => setSheet('injury')}><span>מצב פציעה{activeInjuries(profile.injuries).length > 0 ? ' · פעיל' : ''}</span><span>←</span></button>
         <button className="row-btn" onClick={() => setSheet('program')}><span>עריכת תוכנית האימונים</span><span>←</span></button>
         <button className="row-btn" onClick={() => setSheet('custom')}><span>התרגילים שלי (הוספת תרגיל)</span><span>←</span></button>
@@ -325,6 +327,7 @@ export function Profile() {
       {sheet === 'equipment' && <MyGymSheet onClose={() => setSheet(null)} />}
       {sheet === 'week' && <WeekPlanSheet onClose={() => setSheet(null)} />}
       {sheet === 'injury' && <InjurySheet onClose={() => setSheet(null)} />}
+      {sheet === 'alerts' && <AlertsSheet onClose={() => setSheet(null)} />}
       {sheet === 'custom' && <CustomExercisesSheet onClose={() => setSheet(null)} />}
       {sheet === 'program' && <ProgramEditorSheet onClose={() => setSheet(null)} />}
       {sheet === 'edit' && (

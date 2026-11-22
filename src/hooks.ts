@@ -84,9 +84,10 @@ export function beep(): void {
     [0, 0.25, 0.5].forEach((offset) => {
       const osc = ctx!.createOscillator();
       const gain = ctx!.createGain();
+      osc.type = 'square';
       osc.frequency.value = 880;
       gain.gain.setValueAtTime(0.0001, ctx!.currentTime + offset);
-      gain.gain.exponentialRampToValueAtTime(0.4, ctx!.currentTime + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.8, ctx!.currentTime + offset + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, ctx!.currentTime + offset + 0.18);
       osc.connect(gain).connect(ctx!.destination);
       osc.start(ctx!.currentTime + offset);

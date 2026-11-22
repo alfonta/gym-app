@@ -5,7 +5,8 @@ import { TEMPLATE_MAP } from '../data/programs';
 import { getAlternatives, isExerciseAvailable } from '../engine/alternatives';
 import { calcPlates, formatClock } from '../engine/calc';
 import { suggestNext, warmupSets } from '../engine/progression';
-import { beep, primeAudio, useNow, useWakeLock } from '../hooks';
+import { primeAudio, useNow, useWakeLock } from '../hooks';
+import { formatMinutes, overdueState, usualMinutes } from '../engine/overdue';
 import { historyFor, useCatalog, useStore, type WorkoutSummary } from '../store';
 import { videoLink } from '../engine/catalog';
 import { isBlocked } from '../engine/injury';
@@ -129,18 +130,9 @@ function RestBar({ nextName, progress }: { nextName: string | null; progress: nu
   const adjustRest = useStore((s) => s.adjustRest);
   const skipRest = useStore((s) => s.skipRest);
   const now = useNow(250);
-  const beeped = useRef<number | null>(null);
   // `now` can lag by one tick, so never show more than the full duration.
   const remaining = rest ? Math.min(rest.total_seconds, Math.ceil((rest.ends_at - now) / 1000)) : 0;
   const over = !!rest && remaining <= 0;
-
-  useEffect(() => {
-    if (rest && over && beeped.current !== rest.ends_at) {
-      beeped.current = rest.ends_at;
-      // Skip the sound if the timer expired long ago (e.g. app reopened later).
-      if (Date.now() - rest.ends_at < 3000) beep();
-    }
-  }, [rest, over]);
 
   return (
     <footer className="restbar">
@@ -324,6 +316,7 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
     ? warmupSets(suggestion?.weight_kg ?? num(item.sets[0].weight) ?? 0, profile.bar_weight_kg)
     : [];
   const firstTime = !last && !item.sets.some((s) => s.done);
+  const overdue = overdueState(active, usualMinutes(workouts), now);
   const todayItems = active.items.map((it) => ({ ex: cat.get(it.exercise_id), sets: it.sets.length }));
   const todayMuscles = [...new Set((todayItems.some((t) => !t.ex.is_core) ? todayItems.filter((t) => !t.ex.is_core) : todayItems).map((t) => t.ex.muscle_group))];
   const openMore = () => {
@@ -538,6 +531,26 @@ export function ActiveWorkoutScreen({ onFinished, onMinimize }: { onFinished: (s
       )}
 
       {plateFor !== null && <PlateSheet initial={plateFor} onClose={() => setPlateFor(null)} />}
+
+      {overdue.forgotten && !confirmFinish && (
+        <Sheet title="נראה ששכחת לסגור את האימון" onClose={() => st().snoozeOverdue(30)}>
+          <p>
+            האימון פתוח כבר {formatMinutes(overdue.elapsed_min)}
+            {doneSets > 0 ? `, והסט האחרון סומן לפני ${formatMinutes(overdue.idle_min)}.` : ', ועוד לא סומן בו אף סט.'}
+            {' '}אימון רגיל אצלך נמשך כ-{overdue.usual_min} דקות.
+          </p>
+          <div className="stack">
+            {doneSets > 0 && (
+              <button className="btn primary" onClick={() => onFinished(st().finishWorkout(overdue.end_at))}>
+                סיים ושמור · משך {formatMinutes(Math.max(1, Math.round((overdue.end_at - active.started_at) / 60000)))}
+              </button>
+            )}
+            <button className="btn ghost" onClick={() => st().snoozeOverdue(30)}>אני עדיין מתאמן</button>
+            <button className="btn ghost danger-text" onClick={discard}>בטל את האימון בלי לשמור</button>
+          </div>
+          {doneSets > 0 && <p className="muted small">המשך שיישמר נמדד עד שתי דקות אחרי הסט האחרון, כדי שהזמן שהאימון נשאר פתוח לא ייכנס לסטטיסטיקה.</p>}
+        </Sheet>
+      )}
 
       {overview && (
         <Sheet title={`${tpl.name} · סקירת האימון`} onClose={() => setOverview(false)}>

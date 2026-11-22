@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
 import { PROGRAM_LABEL, TEMPLATES, TEMPLATE_MAP, initialRotation, scheduleOf, weekPointer, weekStartMode } from '../data/programs';
 import { applyUpdate, useUpdate } from '../update';
+import { formatMinutes, overdueState, usualMinutes } from '../engine/overdue';
 import { estimateMinutes, formatClock, weekStart, ymd } from '../engine/calc';
 import { primeAudio, useNow } from '../hooks';
 import { backupAgeDays, planSplit, useStore } from '../store';
@@ -135,6 +136,9 @@ export function Home({ onOpenWorkout }: { onOpenWorkout: () => void }) {
           <div className="tag">אימון פעיל</div>
           <h2>{TEMPLATE_MAP[active.split_type].name}</h2>
           <p className="muted">זמן שעבר: {formatClock((now - active.started_at) / 1000)}</p>
+          {overdueState(active, usualMinutes(workouts), now).forgotten && (
+            <p className="warn" role="alert">האימון פתוח כבר {formatMinutes(Math.floor((now - active.started_at) / 60000))}. שכחת לסגור אותו? היכנס כדי לסיים ולשמור.</p>
+          )}
           <button className="btn primary block" onClick={onOpenWorkout}>חזור לאימון</button>
         </section>
       ) : (

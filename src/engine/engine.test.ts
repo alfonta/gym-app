@@ -3,6 +3,7 @@ import { EXERCISES, EXERCISE_MAP } from '../data/exercises';
 import { EQUIPMENT } from '../data/equipment';
 import { PRESETS, TEMPLATES, advanceRotation, initialRotation, scheduleOf, weekPointer, weekStartMode } from '../data/programs';
 import { recoverActive } from '../store';
+import { formatMinutes, lastActivity, overdueState, usualMinutes } from './overdue';
 import { applyVariety } from './variety';
 import { buildWorkout, suggestMore } from './builder';
 import { workoutFeedback, type FeedbackItem } from './feedback';
@@ -661,5 +662,49 @@ describe('recovering the workout in progress after a reload', () => {
   });
   it('an unreadable workout from another version is set aside, not crashed on', () => {
     expect(recoverActive({ id: 'w', items: 'nope' }, undefined, none)).toBeNull();
+  });
+});
+
+describe('workout left open', () => {
+  const T0 = new Date('2026-11-01T10:00:00').getTime();
+  const min = (m: number) => T0 + m * 60000;
+  const W = (mins: number[]) => mins.map((m, i) => ({ date: new Date(2026, 9, i + 1).toISOString(), total_duration_minutes: m }));
+  const active = (doneAt: number[]) => ({
+    id: 'a', split_type: 'push', started_at: T0, current_index: 0, rest: null,
+    items: [{ planned_exercise_id: 'x', exercise_id: 'x', role: 'anchor', rep_min: 6, rep_max: 10, effort: null,
+      sets: [...doneAt.map((m) => ({ weight: '40', reps: '10', done: true, completed_at: new Date(min(m)).toISOString(), is_pr: false })),
+        { weight: '', reps: '', done: false, completed_at: null, is_pr: false }] }],
+  }) as never;
+  it('usual length: median of recent workouts, 75 until there are 3', () => {
+    expect(usualMinutes(W([50, 60]))).toBe(75);
+    expect(usualMinutes(W([50, 60, 200]))).toBe(60);
+    expect(usualMinutes(W([50, 60, 70, 80]))).toBe(65);
+  });
+  it('last activity is the latest ticked set', () => {
+    expect(lastActivity(active([5, 20, 12]))).toBe(min(20));
+    expect(lastActivity(active([]))).toBe(T0);
+  });
+  it('a normal workout in progress is not flagged', () => {
+    expect(overdueState(active([5, 10, 40]), 60, min(55)).forgotten).toBe(false);
+  });
+  it('45 minutes without a set → flagged, and the save time is just after the last set', () => {
+    const o = overdueState(active([5, 30]), 60, min(76));
+    expect(o.forgotten).toBe(true);
+    expect(o.idle_min).toBe(46);
+    expect(o.end_at).toBe(min(32));
+  });
+  it('far longer than usual with a quiet spell → flagged', () => {
+    expect(overdueState(active([10, 60, 85]), 60, min(101)).forgotten).toBe(true);   // 101 ≥ 90, idle 16
+    expect(overdueState(active([10, 60, 95]), 60, min(101)).forgotten).toBe(false);  // still ticking sets
+  });
+  it('"still training" silences it until the snooze ends', () => {
+    const a = { ...(active([5]) as object), overdue_snooze_until: min(90) } as never;
+    expect(overdueState(a, 60, min(80)).forgotten).toBe(false);
+    expect(overdueState(a, 60, min(95)).forgotten).toBe(true);
+  });
+  it('minutes in Hebrew', () => {
+    expect(formatMinutes(45)).toBe('45 דק׳');
+    expect(formatMinutes(60)).toBe('שעה');
+    expect(formatMinutes(135)).toBe('2 שעות ו-15 דק׳');
   });
 });
